@@ -1,0 +1,65 @@
+# Docker Compose for DEVELOPMENT environment
+#
+# The Google Maps API key is a real secret and is NOT hardcoded here — it is
+# read from docker/.env (gitignored via `.env*`; see docker/.env.example).
+# Everything else below is a throwaway local-dev default, not a secret.
+#
+# Usage:
+#   cp .env.example .env   # once, then fill in GOOGLE_MAPS_API_KEY
+#   cd docker
+#   export ARIVI_ENVIRONMENT=development
+#   docker compose -f docker-compose-development.yaml up -d
+
+version: '3.8'
+services:
+  fleet-aurora-mysql-local:
+    image: mysql:8.0
+    container_name: fleet_aurora_mysql_local
+    restart: always
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: strong_root_password
+      MYSQL_DATABASE: fleet
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    volumes:
+      - fleet_mysql_data:/var/lib/mysql
+  insurance-broker-bff:
+    links:
+      - fleet-aurora-mysql-local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    image: insurance-broker-bff
+    ports:
+      - "5002:8510"
+    container_name: insurance-broker-bff
+    volumes:
+      - ../src:/app
+      - ~/.aws:/root/.aws
+    environment:
+      AWS_REGION: us-east-1
+      API_INTERNAL_LOGGER_APPLICATION_NAME: api-internal-local
+      BASIC_AUTH_USERNAME: admin
+      BASIC_AUTH_PASSWORD: changeme
+      FLEETS_DATABASE_HOST: host.docker.internal
+      FLEETS_DATABASE_PORT: 3307
+      FLEETS_DATABASE_SCHEMA: fleet
+      FLEETS_DATABASE_USERNAME: app_user
+      FLEETS_DATABASE_PASSWORD: app_password
+      CARRIERS_SERVICE_BASE_URL: 'http://127.0.0.1:3003/'
+      CARRIERS_SERVICE_USERNAME: 'admin'
+      CARRIERS_SERVICE_PASSWORD: 'changeme'
+      AWS_INTERNAL_SERVICE_FILE_STORAGE_BUCKET_NAME: 'arivi-fleets-dev'
+      AWS_INTERNAL_SERVICE_NOTIFIER_TOPIC_ARN: 'arn:aws:sns:us-east-1:381492207837:fleets-alerts-dev'
+      UNEXPECTED_STOP_DESTINATION_DISTANCE_THRESHOLD_M: 50.0
+      STOPPAGE_MIN_DURATION_S: 15
+      STOPPAGE_MIN_POINTS: 15
+      STOPPAGE_LOG_WINDOW_S: 900
+      GOOGLE_MAPS_API_KEY: 'AIzaSyCDs93C6tQgs85Wxc32EvSNLaNmswytVGU'
+    command:
+      uvicorn presentation.apis.bff.main:app --host 0.0.0.0 --port 8510 --reload
+
+
+volumes:
+  fleet_mysql_data:
