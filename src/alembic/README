@@ -1,0 +1,5 @@
+Single-database Alembic setup for fleet service.
+
+Run from src/alembic:
+- alembic upgrade head -x db_url="mysql+mysqlconnector://user:pass@host:3306/db"
+- alembic downgrade -1 -x db_url="mysql+mysqlconnector://user:pass@host:3306/db"

@@ -14,6 +14,8 @@ from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
 from domain.exceptions.authentication import AuthenticationError
+from domain.exceptions.persistence import UserPersistenceError
+from domain.repositories.user import UserRepository
 from domain.services.authentication import AuthenticationChallenge, AuthenticationEngine, SignUpResult
 from infrastructure.authentication import cognito as cognito_module
 from infrastructure.config.settings import Settings
@@ -89,7 +91,8 @@ class SignInUseCaseTests(unittest.TestCase):
     def test_sign_up_use_case_uses_email_as_username(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
         engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
-        use_case = SignUpUseCase(authentication_engine=engine)
+        repository = Mock(spec=UserRepository)
+        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
 
         result = use_case.execute(email="user@example.com", password="test-password")
 
@@ -97,6 +100,34 @@ class SignInUseCaseTests(unittest.TestCase):
         engine.sign_up.assert_called_once_with(
             username="user@example.com", email="user@example.com", password="test-password",
         )
+        repository.add.assert_called_once()
+        user = repository.add.call_args.args[0]
+        self.assertEqual(user.id, "user-id")
+        self.assertEqual(user.email, "user@example.com")
+        self.assertEqual(user.external_id, "user-id")
+        self.assertIsNotNone(user.created_at.tzinfo)
+        self.assertFalse(hasattr(user, "password"))
+
+    def test_sign_up_use_case_does_not_save_when_cognito_fails(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.sign_up.side_effect = AuthenticationError("user_exists", "Username is already registered")
+        repository = Mock(spec=UserRepository)
+        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
+
+        with self.assertRaises(AuthenticationError):
+            use_case.execute(email="user@example.com", password="test-password")
+
+        repository.add.assert_not_called()
+
+    def test_sign_up_use_case_propagates_persistence_failure(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
+        repository = Mock(spec=UserRepository)
+        repository.add.side_effect = UserPersistenceError("Unable to save user")
+        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
+
+        with self.assertRaises(UserPersistenceError):
+            use_case.execute(email="user@example.com", password="test-password")
 
     def test_use_case_delegates_to_domain_engine(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
@@ -150,6 +181,9 @@ class SignInTests(unittest.TestCase):
         self.client_factory = client_patch.start()
         self.addCleanup(client_patch.stop)
         self.cognito = self.client_factory.return_value
+        self.user_repository = Mock(spec=UserRepository)
+        app.state.container.user_repository.override(self.user_repository)
+        self.addCleanup(app.state.container.user_repository.reset_override)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         self.credentials = {"username": "test-user", "password": "test-password"}
@@ -255,6 +289,23 @@ class SignInTests(unittest.TestCase):
             SecretHash=expected_hash, UserAttributes=[{"Name": "email", "Value": "user@example.com"}],
         )
         self.assertNotIn("test-password", response.text)
+        self.user_repository.add.assert_called_once()
+        user = self.user_repository.add.call_args.args[0]
+        self.assertEqual(user.id, "user-id")
+        self.assertEqual(user.email, "user@example.com")
+        self.assertEqual(user.external_id, "user-id")
+
+    def test_sign_up_reports_profile_persistence_failure(self) -> None:
+        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
+        self.user_repository.add.side_effect = UserPersistenceError("private database details")
+
+        response = self.client.post("/auth/sign-up", json={
+            "email": "user@example.com", "password": "test-password",
+        })
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Registration succeeded in Cognito", response.json()["detail"])
+        self.assertNotIn("private database details", response.text)
 
     def test_sign_up_supports_auto_confirmed_users(self) -> None:
         self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": True}

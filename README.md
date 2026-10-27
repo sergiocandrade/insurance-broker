@@ -20,6 +20,44 @@ docker build -f docker/Dockerfile_BFF -t insurance-broker-bff .
 docker run --rm -p 8510:8510 insurance-broker-bff
 ```
 
+## User Database
+
+Sign-up creates a domain user and persists it through a SQLAlchemy repository in
+MySQL. The `users` table stores Cognito's user ID as its primary key, a unique
+email, and a UTC creation timestamp. Passwords and tokens are never stored here.
+The signup response and confirmation flow remain unchanged.
+
+`DatabaseSettings` requires `DATABASE_URL`. Compose supplies a development URL
+for the existing MySQL service; override it in the environment or `docker/.env`
+for another database. Keep real database credentials in your secret manager.
+
+Create the initial tables before accepting registrations:
+
+```sh
+make build-bff
+make init-bff-db
+make run-bff
+```
+
+For local Python execution against Compose's MySQL:
+
+```sh
+export DATABASE_URL='mysql+pymysql://app_user:app_password@127.0.0.1:3307/fleet?charset=utf8mb4'
+PYTHONPATH=src python -m infrastructure.persistence.database
+```
+
+The schema command creates missing tables without deleting data. It is an
+initial bootstrap, not a migration system for later column changes. Back up
+production data and use reviewed migrations when changing an existing schema.
+
+Cognito registration and the MySQL commit are not a distributed transaction.
+The API returns success only after both complete. If MySQL fails after Cognito
+creates the account, the API returns `503` and explicitly reports partial
+registration. Support must reconcile the missing profile using the Cognito user
+ID and email before retrying; this flow does not automatically delete the
+Cognito account or store its password for recovery. Other auth endpoints do not
+require database configuration.
+
 ## Cognito Sign-Up
 
 Enable self-service sign-up on the user pool and allow the app client to write
@@ -116,9 +154,11 @@ errors, or `503` for missing configuration or an unavailable service.
 
 ## Dependency Injection
 
-`src/containers.py` defines the `dependency-injector` container for the API:
-settings are a lazy singleton, while the authentication engine and sign-in use
-case use factory providers. The FastAPI entry point wires the route module and
+`src/presentation/apis/bff/containers.py` defines the `dependency-injector`
+container for the API. Settings, the SQLAlchemy engine, and the session factory
+are lazy singletons; authentication engines, user repositories, and use cases
+use factory providers. Each repository write gets its own transaction and
+session. The FastAPI entry point wires the route module and
 stores the container at `app.state.container`. Restart the application after
 changing environment settings that have already been loaded.
 
@@ -131,4 +171,10 @@ Domain interfaces and use cases do not depend on the container or FastAPI.
 ```sh
 python -m pip install -r requirements-dev.txt
 PYTHONPATH=src python -m unittest discover -s tests/presentation -p 'test_*.py' -v
+PYTHONPATH=src python -m unittest discover -s tests/infrastructure -p 'test_*.py' -v
 ```
+
+Repository tests use SQLite by default and compile the schema for MySQL. Set
+`TEST_MYSQL_URL` to run the MySQL integration check, which uses a temporary
+`users` table visible only on the test connection and leaves persistent tables
+and records unchanged.

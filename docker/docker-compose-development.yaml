@@ -12,22 +12,27 @@
 
 version: '3.8'
 services:
-  fleet-aurora-mysql-local:
+  insurance-broker-mysql-local:
     image: mysql:8.0
-    container_name: fleet_aurora_mysql_local
+    container_name: insurance-broker-mysql-local
     restart: always
     ports:
-      - "3307:3306"
+      - "3310:3306"
     environment:
       MYSQL_ROOT_PASSWORD: strong_root_password
-      MYSQL_DATABASE: fleet
+      MYSQL_DATABASE: insurance-broker
       MYSQL_USER: app_user
       MYSQL_PASSWORD: app_password
     volumes:
-      - fleet_mysql_data:/var/lib/mysql
+      - insurance-broker-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
   insurance-broker-bff:
     links:
-      - fleet-aurora-mysql-local
+      - insurance-broker-mysql-local
     extra_hosts:
       - "host.docker.internal:host-gateway"
     image: insurance-broker-bff
@@ -39,6 +44,7 @@ services:
       - ~/.aws:/root/.aws
     environment:
       AWS_REGION: '${AWS_REGION:-us-east-1}'
+      DATABASE_URL: '${DATABASE_URL:-mysql+pymysql://app_user:app_password@host.docker.internal:3310/insurance-broker?charset=utf8mb4}'
       COGNITO_CLIENT_ID: '782jk9k3ln1f4n82n2me9boqt5'
       COGNITO_CLIENT_SECRET: '1b84uv7g8vk7kfj1l4u1cnilo8udbkvr9urett2asvsa3mol04sk'
       
@@ -47,4 +53,4 @@ services:
 
 
 volumes:
-  fleet_mysql_data:
+  insurance-broker-mysql-data:

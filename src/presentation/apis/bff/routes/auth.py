@@ -11,6 +11,7 @@ from application.use_cases.sign_in import SignInUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from presentation.apis.bff.containers import Container
 from domain.exceptions.authentication import AuthenticationError
+from domain.exceptions.persistence import UserPersistenceError
 from domain.services.authentication import AuthenticationResult, AuthenticationTokens
 from presentation.apis.bff.dtos.auth import (
     ConfirmPasswordResetRequest,
@@ -48,6 +49,8 @@ def get_sign_up_use_case(
         return use_case_provider()
     except ValidationError:
         raise HTTPException(status_code=503, detail="Authentication is not configured") from None
+    except UserPersistenceError:
+        raise HTTPException(status_code=503, detail="User database is not configured") from None
 
 
 @inject
@@ -128,6 +131,11 @@ def sign_up(
         )
     except AuthenticationError as error:
         raise authentication_http_error(error) from None
+    except UserPersistenceError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Registration succeeded in Cognito, but the user profile could not be saved. Contact support before retrying. {error}",
+        ) from None
 
     response.headers["Cache-Control"] = "no-store"
     return SignUpResponse(

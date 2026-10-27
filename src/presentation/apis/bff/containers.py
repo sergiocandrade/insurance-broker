@@ -1,4 +1,5 @@
 from dependency_injector import containers, providers
+from sqlalchemy.orm import sessionmaker
 
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
@@ -6,7 +7,9 @@ from application.use_cases.reset_password import ConfirmPasswordResetUseCase, Re
 from application.use_cases.sign_in import SignInUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from infrastructure.authentication.cognito import CognitoAuthenticationEngine
-from infrastructure.config.settings import Settings
+from infrastructure.config.settings import DatabaseSettings, Settings
+from infrastructure.persistence.database import create_database_engine
+from infrastructure.persistence.user_repository import SqlAlchemyUserRepository
 
 
 class Container(containers.DeclarativeContainer):
@@ -14,6 +17,23 @@ class Container(containers.DeclarativeContainer):
 
     settings = providers.Singleton(Settings)
 
+    database_settings = providers.Singleton(DatabaseSettings)
+
+    database_engine = providers.Singleton(
+        create_database_engine,
+        database_url=database_settings.provided.DATABASE_URL.get_secret_value.call(),
+    )
+
+    session_factory = providers.Singleton(
+        sessionmaker,
+        bind=database_engine,
+        expire_on_commit=False,
+    )
+
+    user_repository = providers.Factory(
+        SqlAlchemyUserRepository,
+        session_factory=session_factory,
+    )
 
     authentication_engine = providers.Factory(
         CognitoAuthenticationEngine,
@@ -30,6 +50,7 @@ class Container(containers.DeclarativeContainer):
     sign_up_use_case = providers.Factory(
         SignUpUseCase,
         authentication_engine=authentication_engine,
+        user_repository=user_repository,
     )
 
     confirm_sign_up_use_case = providers.Factory(

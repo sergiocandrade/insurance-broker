@@ -1,0 +1,16 @@
+FROM python:3.12-bullseye
+
+RUN pip install pydantic-settings
+RUN pip install mysql-connector-python
+RUN pip install SQLAlchemy==2.0.32
+RUN pip install alembic
+
+ARG ALEMBIC_CMD_ARG
+ARG ALEMBIC_INI_PATH_ARG
+
+ENV ALEMBIC_CMD=$ALEMBIC_CMD_ARG
+ENV ALEMBIC_INI_PATH=$ALEMBIC_INI_PATH_ARG
+
+WORKDIR /app
+
+CMD sh -c "alembic -c $ALEMBIC_INI_PATH -x db_url=mysql+mysqlconnector://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME} $ALEMBIC_CMD"
