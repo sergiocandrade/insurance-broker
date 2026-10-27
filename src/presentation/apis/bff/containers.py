@@ -3,9 +3,11 @@ from sqlalchemy.orm import sessionmaker
 
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
+from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
 from application.use_cases.sign_in import SignInUseCase
 from application.use_cases.sign_up import SignUpUseCase
+from domain.services.user import UserService
 from infrastructure.authentication.cognito import CognitoAuthenticationEngine
 from infrastructure.config.settings import DatabaseSettings, Settings
 from infrastructure.persistence.database import create_database_engine
@@ -35,6 +37,11 @@ class Container(containers.DeclarativeContainer):
         session_factory=session_factory,
     )
 
+    user_service = providers.Factory(
+        UserService,
+        user_repository=user_repository,
+    )
+
     authentication_engine = providers.Factory(
         CognitoAuthenticationEngine,
         region=settings.provided.AWS_REGION,
@@ -47,15 +54,22 @@ class Container(containers.DeclarativeContainer):
         authentication_engine=authentication_engine,
     )
 
+    get_current_user_use_case = providers.Factory(
+        GetCurrentUserUseCase,
+        authentication_engine=authentication_engine,
+        user_service=user_service,
+    )
+
     sign_up_use_case = providers.Factory(
         SignUpUseCase,
         authentication_engine=authentication_engine,
-        user_repository=user_repository,
+        user_service=user_service,
     )
 
     confirm_sign_up_use_case = providers.Factory(
         ConfirmSignUpUseCase,
         authentication_engine=authentication_engine,
+        user_service=user_service,
     )
 
     complete_new_password_use_case = providers.Factory(

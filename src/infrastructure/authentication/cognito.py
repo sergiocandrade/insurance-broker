@@ -30,6 +30,29 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
         ).digest()
         return base64.b64encode(digest).decode("ascii")
 
+    def get_authenticated_user_id(self, access_token: str) -> str:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            result = client.get_user(AccessToken=access_token)
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code in {"NotAuthorizedException", "UserNotFoundException"}:
+                raise AuthenticationError("invalid_credentials", "Invalid or expired access token") from None
+            if code == "ForbiddenException":
+                raise AuthenticationError("access_forbidden", "Access is not permitted") from None
+            if code in {"TooManyRequestsException", "LimitExceededException"}:
+                raise AuthenticationError("throttled", "Too many authentication attempts") from None
+            raise AuthenticationError("service_error", "Authentication service error") from None
+        except BotoCoreError:
+            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
+
+        for attribute in result.get("UserAttributes", []):
+            if attribute.get("Name") == "sub":
+                user_id = attribute.get("Value")
+                if isinstance(user_id, str) and user_id:
+                    return user_id
+        raise AuthenticationError("service_error", "Authentication service returned no user identifier")
+
     def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
         try:
             client = boto3.client("cognito-idp", region_name=self.region)

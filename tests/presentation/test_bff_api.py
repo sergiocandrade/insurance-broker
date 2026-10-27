@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+from datetime import UTC, datetime
 import unittest
 from unittest.mock import Mock, patch
 
@@ -11,12 +12,15 @@ from pydantic import ValidationError
 from application.use_cases import sign_in as sign_in_module
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
+from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
 from domain.exceptions.authentication import AuthenticationError
 from domain.exceptions.persistence import UserPersistenceError
+from domain.models.user import UserModel as DomainUserModel, UserStatus
 from domain.repositories.user import UserRepository
 from domain.services.authentication import AuthenticationChallenge, AuthenticationEngine, SignUpResult
+from domain.services.user import UserService
 from infrastructure.authentication import cognito as cognito_module
 from infrastructure.config.settings import Settings
 from presentation.apis.bff.main import app
@@ -80,19 +84,78 @@ class SettingsTests(unittest.TestCase):
 
 
 class SignInUseCaseTests(unittest.TestCase):
+    def test_user_service_add_uses_domain_repository(self) -> None:
+        repository = Mock(spec=UserRepository)
+        service = UserService(user_repository=repository)
+
+        service.add(email="user@example.com", external_id="cognito-sub")
+
+        repository.add.assert_called_once()
+        user = repository.add.call_args.args[0]
+        self.assertIs(type(user), DomainUserModel)
+        self.assertEqual(user.email, "user@example.com")
+        self.assertEqual(user.external_id, "cognito-sub")
+        self.assertEqual(user.status, UserStatus.REGISTERED)
+
+    def test_sign_up_use_case_delegates_to_user_service(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
+        service = Mock(spec=UserService)
+        use_case = SignUpUseCase(authentication_engine=engine, user_service=service)
+
+        result = use_case.execute(email="user@example.com", password="test-password")
+
+        self.assertIs(result, engine.sign_up.return_value)
+        service.add.assert_called_once_with(email="user@example.com", external_id="user-id")
+
+    def test_current_user_returns_domain_model_through_service(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.get_authenticated_user_id.return_value = "cognito-sub"
+        repository = Mock(spec=UserRepository)
+        user = DomainUserModel(
+            id="local-id", email="user@example.com", external_id="cognito-sub",
+            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+        )
+        repository.get_by_external_id.return_value = user
+        service = UserService(user_repository=repository)
+        use_case = GetCurrentUserUseCase(authentication_engine=engine, user_service=service)
+
+        with patch.object(service, "get_info", wraps=service.get_info) as get_info:
+            result = use_case.execute(access_token="test-access-token")
+            get_info.assert_called_once_with(external_id="cognito-sub")
+
+        self.assertIs(type(result), DomainUserModel)
+        self.assertEqual(result.id, "local-id")
+        self.assertEqual(result.email, "user@example.com")
+        self.assertEqual(result.status, UserStatus.EMAIL_CONFIRMED)
+        repository.get_by_external_id.assert_called_once_with(external_id="cognito-sub")
+
     def test_confirm_sign_up_use_case_uses_email_as_username(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
-        use_case = ConfirmSignUpUseCase(authentication_engine=engine)
+        repository = Mock(spec=UserRepository)
+        use_case = ConfirmSignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
 
         use_case.execute(email="user@example.com", code="123456")
 
         engine.confirm_sign_up.assert_called_once_with(username="user@example.com", code="123456")
+        repository.mark_email_confirmed.assert_called_once_with(email="user@example.com")
+
+    def test_confirm_sign_up_does_not_update_status_when_cognito_fails(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.confirm_sign_up.side_effect = AuthenticationError("invalid_signup_confirmation", "Invalid code")
+        repository = Mock(spec=UserRepository)
+        use_case = ConfirmSignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
+
+        with self.assertRaises(AuthenticationError):
+            use_case.execute(email="user@example.com", code="123456")
+
+        repository.mark_email_confirmed.assert_not_called()
 
     def test_sign_up_use_case_uses_email_as_username(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
         engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
         repository = Mock(spec=UserRepository)
-        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
+        use_case = SignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
 
         result = use_case.execute(email="user@example.com", password="test-password")
 
@@ -105,6 +168,7 @@ class SignInUseCaseTests(unittest.TestCase):
         self.assertEqual(user.id, "user-id")
         self.assertEqual(user.email, "user@example.com")
         self.assertEqual(user.external_id, "user-id")
+        self.assertEqual(user.status, UserStatus.REGISTERED)
         self.assertIsNotNone(user.created_at.tzinfo)
         self.assertFalse(hasattr(user, "password"))
 
@@ -112,7 +176,7 @@ class SignInUseCaseTests(unittest.TestCase):
         engine = Mock(spec=AuthenticationEngine)
         engine.sign_up.side_effect = AuthenticationError("user_exists", "Username is already registered")
         repository = Mock(spec=UserRepository)
-        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
+        use_case = SignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
 
         with self.assertRaises(AuthenticationError):
             use_case.execute(email="user@example.com", password="test-password")
@@ -124,7 +188,7 @@ class SignInUseCaseTests(unittest.TestCase):
         engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
         repository = Mock(spec=UserRepository)
         repository.add.side_effect = UserPersistenceError("Unable to save user")
-        use_case = SignUpUseCase(authentication_engine=engine, user_repository=repository)
+        use_case = SignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
 
         with self.assertRaises(UserPersistenceError):
             use_case.execute(email="user@example.com", password="test-password")
@@ -192,6 +256,110 @@ class SignInTests(unittest.TestCase):
             "new_password": "new-test-password",
             "session": "challenge-session",
         }
+        self.logged_user = DomainUserModel(
+            id="local-user-id", email="user@example.com", external_id="cognito-user-sub",
+            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+        )
+        self.cognito.get_user.return_value = {
+            "UserAttributes": [{"Name": "sub", "Value": "cognito-user-sub"}],
+        }
+        self.user_repository.get_by_external_id.return_value = self.logged_user
+
+    def test_current_user_returns_authenticated_profile(self) -> None:
+        response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "id": "local-user-id", "email": "user@example.com", "external_id": "cognito-user-sub",
+            "status": "EMAIL_CONFIRMED", "created_at": "2026-10-27T00:00:00Z",
+        })
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.cognito.get_user.assert_called_once_with(AccessToken="test-access-token")
+        self.user_repository.get_by_external_id.assert_called_once_with(external_id="cognito-user-sub")
+        self.assertNotIn("test-access-token", response.text)
+
+    def test_current_user_requires_bearer_token(self) -> None:
+        for headers in ({}, {"Authorization": "Basic invalid"}, {"Authorization": "Bearer "}):
+            with self.subTest(headers=headers):
+                response = self.client.get("/auth/me", headers=headers)
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+        self.client_factory.assert_not_called()
+        self.user_repository.get_by_external_id.assert_not_called()
+
+    def test_current_user_cognito_errors_are_sanitized(self) -> None:
+        for code, expected_status in (
+            ("NotAuthorizedException", 401), ("UserNotFoundException", 401),
+            ("ForbiddenException", 403), ("TooManyRequestsException", 429), ("InternalErrorException", 502),
+        ):
+            with self.subTest(code=code):
+                self.cognito.get_user.side_effect = ClientError(
+                    {"Error": {"Code": code, "Message": "private AWS details"}}, "GetUser",
+                )
+                response = self.client.get("/auth/me", headers={"Authorization": "Bearer invalid-token"})
+                self.assertEqual(response.status_code, expected_status)
+                self.assertNotIn("private AWS details", response.text)
+                if expected_status == 401:
+                    self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
+        self.user_repository.get_by_external_id.assert_not_called()
+
+    def test_current_user_requires_cognito_sub(self) -> None:
+        self.cognito.get_user.return_value = {"UserAttributes": [{"Name": "email", "Value": "user@example.com"}]}
+
+        response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 502)
+        self.user_repository.get_by_external_id.assert_not_called()
+
+    def test_current_user_profile_not_found(self) -> None:
+        self.user_repository.get_by_external_id.return_value = None
+
+        response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_current_user_database_error_is_sanitized(self) -> None:
+        self.user_repository.get_by_external_id.side_effect = UserPersistenceError("private database details")
+
+        response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("private database details", response.text)
+
+    def test_current_user_cognito_unavailable(self) -> None:
+        self.cognito.get_user.side_effect = EndpointConnectionError(endpoint_url="https://cognito.example.com")
+
+        response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 503)
+        self.user_repository.get_by_external_id.assert_not_called()
+
+    def test_current_user_service_can_be_overridden(self) -> None:
+        service = Mock(spec=UserService)
+        service.get_info.return_value = DomainUserModel(
+            id=self.logged_user.id,
+            email=self.logged_user.email,
+            external_id=self.logged_user.external_id,
+            status=self.logged_user.status,
+            created_at=self.logged_user.created_at,
+        )
+
+        with app.state.container.user_service.override(service):
+            response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], self.logged_user.id)
+        service.get_info.assert_called_once_with(external_id="cognito-user-sub")
+        self.user_repository.get_by_external_id.assert_not_called()
+
+    def test_current_user_use_case_can_be_overridden(self) -> None:
+        use_case = Mock(spec=GetCurrentUserUseCase)
+        use_case.execute.return_value = self.logged_user
+        with app.state.container.get_current_user_use_case.override(use_case):
+            response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
+        self.assertEqual(response.status_code, 200)
+        use_case.execute.assert_called_once_with(access_token="test-access-token")
+        self.client_factory.assert_not_called()
 
     def test_confirm_sign_up_sends_email_code_and_secret_hash(self) -> None:
         response = self.client.post("/auth/sign-up/confirm", json={
@@ -210,6 +378,18 @@ class SignInTests(unittest.TestCase):
             ClientId="test-client", Username="user@example.com", ConfirmationCode="123456",
             SecretHash=expected_hash, ForceAliasCreation=False,
         )
+        self.user_repository.mark_email_confirmed.assert_called_once_with(email="user@example.com")
+
+    def test_confirm_sign_up_reports_status_persistence_failure(self) -> None:
+        self.user_repository.mark_email_confirmed.side_effect = UserPersistenceError("private database details")
+
+        response = self.client.post("/auth/sign-up/confirm", json={
+            "email": "user@example.com", "code": "123456",
+        })
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Email confirmed in Cognito", response.json()["detail"])
+        self.assertNotIn("private database details", response.text)
 
     def test_confirm_sign_up_errors_are_sanitized(self) -> None:
         for code, expected_status in (

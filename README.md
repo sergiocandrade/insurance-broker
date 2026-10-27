@@ -152,6 +152,33 @@ Errors return `401` for invalid credentials, `403` for required account
 verification or password reset, `429` for throttling, `502` for other Cognito
 errors, or `503` for missing configuration or an unavailable service.
 
+## Current User
+
+Retrieve the logged-in user's local profile with the Cognito access token
+returned by sign-in, not the ID token. The access token must include the
+`aws.cognito.signin.user.admin` scope for Cognito's `GetUser` API.
+
+```sh
+curl http://localhost:5002/auth/me \
+	-H 'Authorization: Bearer YOUR_ACCESS_TOKEN'
+```
+
+Returns `id`, `email`, `external_id`, `status`, and UTC `created_at`. Cognito
+validates the token before the API looks up the profile using its trusted `sub`.
+The caller cannot select a different user by supplying an email or user ID.
+Passwords, access tokens, and refresh tokens are not returned or cached.
+
+Status is `REGISTERED` after sign-up or `EMAIL_CONFIRMED` after successful signup
+confirmation. `COMPLETED` is reserved for the future profile-completion flow;
+reading the profile does not change it. Apply pending database migrations with
+`make run-migration` before using this endpoint.
+
+Missing, invalid, expired, or revoked tokens return `401`; an authenticated user
+without a local profile receives `404`. Database failures or ambiguous profiles
+with the same external ID return `503` rather than choosing an arbitrary user.
+Use HTTPS in production and never log bearer tokens. Local Uvicorn uses port
+`8510` instead of Compose's `5002`.
+
 ## Dependency Injection
 
 `src/presentation/apis/bff/containers.py` defines the `dependency-injector`

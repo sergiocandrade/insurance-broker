@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -12,12 +13,13 @@ from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateIndex, CreateTable
 
-from domain.entities.user import User
+from domain.models.user import UserModel as DomainUserModel, UserStatus
 from domain.exceptions.persistence import UserPersistenceError
 from domain.services.authentication import AuthenticationEngine, SignUpResult
 from infrastructure.config.settings import DatabaseSettings
 from infrastructure.persistence.database import create_database_engine
 from infrastructure.persistence.models import Base, UserModel
+from infrastructure.persistence.user_mapper import UserMapper
 from infrastructure.persistence.user_repository import SqlAlchemyUserRepository
 from presentation.apis.bff.containers import Container
 
@@ -31,7 +33,7 @@ class UserRepositoryTests(unittest.TestCase):
         self.repository = SqlAlchemyUserRepository(self.sessions)
 
     def test_add_persists_identity_and_email_without_password(self) -> None:
-        user = User(id="user-id", email="user@example.com", external_id="cognito-sub")
+        user = DomainUserModel(id="user-id", email="user@example.com", external_id="cognito-sub", status=UserStatus.REGISTERED)
 
         self.repository.add(user)
 
@@ -40,8 +42,69 @@ class UserRepositoryTests(unittest.TestCase):
             self.assertIsNotNone(saved)
             self.assertEqual(saved.email, "user@example.com")
             self.assertEqual(saved.external_id, "cognito-sub")
+            self.assertEqual(saved.status, UserStatus.REGISTERED)
             self.assertEqual(saved.created_at, user.created_at.replace(tzinfo=None))
         self.assertNotIn("password", UserModel.__table__.columns)
+
+    def test_get_by_external_id_returns_domain_user_with_status(self) -> None:
+        user = DomainUserModel(
+            id="local-id", email="user@example.com", external_id="cognito-sub",
+            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+        )
+        self.repository.add(user)
+
+        found = self.repository.get_by_external_id("cognito-sub")
+
+        self.assertEqual(found, user)
+        self.assertIs(type(found), DomainUserModel)
+
+    def test_user_mapper_round_trip_preserves_domain_values(self) -> None:
+        user = DomainUserModel(
+            id="local-id", email="user@example.com", external_id="cognito-sub",
+            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+        )
+
+        model = UserMapper.to_model(user)
+        restored = UserMapper.to_domain(model)
+
+        self.assertIsInstance(model, UserModel)
+        self.assertIsNone(model.created_at.tzinfo)
+        self.assertEqual(restored, user)
+        self.assertIs(type(restored), DomainUserModel)
+
+    def test_user_mapper_normalizes_aware_timestamps_to_utc(self) -> None:
+        model = UserModel(
+            id="local-id", email="user@example.com", external_id="cognito-sub",
+            status=UserStatus.REGISTERED,
+            created_at=datetime(2026, 10, 27, 2, tzinfo=timezone(timedelta(hours=2))),
+        )
+
+        user = UserMapper.to_domain(model)
+
+        self.assertEqual(user.created_at, datetime(2026, 10, 27, tzinfo=UTC))
+        self.assertIs(user.created_at.tzinfo, UTC)
+
+    def test_get_by_external_id_returns_none_for_unknown_user(self) -> None:
+        self.assertIsNone(self.repository.get_by_external_id("unknown-sub"))
+
+    def test_get_by_external_id_rejects_ambiguous_profiles(self) -> None:
+        self.repository.add(DomainUserModel(
+            id="first-user", email="user@example.com", external_id="same-sub", status=UserStatus.REGISTERED,
+        ))
+        self.repository.add(DomainUserModel(
+            id="second-user", email="other@example.com", external_id="same-sub", status=UserStatus.COMPLETED,
+        ))
+
+        with self.assertRaises(UserPersistenceError):
+            self.repository.get_by_external_id("same-sub")
+
+    def test_get_by_external_id_sanitizes_database_errors(self) -> None:
+        Base.metadata.drop_all(self.engine)
+
+        with self.assertRaises(UserPersistenceError) as error:
+            self.repository.get_by_external_id("cognito-sub")
+
+        self.assertEqual(str(error.exception), "Unable to load user profile")
 
     def test_container_wires_signup_to_persistence(self) -> None:
         authentication_engine = Mock(spec=AuthenticationEngine)
@@ -61,21 +124,52 @@ class UserRepositoryTests(unittest.TestCase):
             self.assertEqual(session.get(UserModel, "user-id").email, "user@example.com")
             self.assertEqual(session.get(UserModel, "user-id").external_id, "user-id")
 
+    def test_email_confirmation_transitions_registered_user(self) -> None:
+        self.repository.add(DomainUserModel(id="user-id", email="user@example.com", external_id="cognito-sub", status=UserStatus.REGISTERED))
+
+        self.repository.mark_email_confirmed("user@example.com")
+        self.repository.mark_email_confirmed("user@example.com")
+
+        with self.sessions() as session:
+            self.assertEqual(session.get(UserModel, "user-id").status, UserStatus.EMAIL_CONFIRMED)
+
+    def test_email_confirmation_does_not_downgrade_completed_user(self) -> None:
+        self.repository.add(DomainUserModel(
+            id="user-id", email="user@example.com", external_id="cognito-sub", status=UserStatus.COMPLETED,
+        ))
+
+        self.repository.mark_email_confirmed("user@example.com")
+
+        with self.sessions() as session:
+            self.assertEqual(session.get(UserModel, "user-id").status, UserStatus.COMPLETED)
+
+    def test_email_confirmation_requires_existing_user(self) -> None:
+        with self.assertRaises(UserPersistenceError):
+            self.repository.mark_email_confirmed("missing@example.com")
+
+    def test_email_confirmation_database_errors_are_sanitized(self) -> None:
+        Base.metadata.drop_all(self.engine)
+
+        with self.assertRaises(UserPersistenceError) as error:
+            self.repository.mark_email_confirmed("user@example.com")
+
+        self.assertEqual(str(error.exception), "Unable to update user registration status")
+
     def test_duplicate_email_rolls_back_and_next_transaction_succeeds(self) -> None:
-        self.repository.add(User(id="first-user", email="user@example.com", external_id="first-sub"))
+        self.repository.add(DomainUserModel(id="first-user", email="user@example.com", external_id="first-sub", status=UserStatus.REGISTERED))
 
         with self.assertRaises(UserPersistenceError):
-            self.repository.add(User(id="duplicate-user", email="user@example.com", external_id="duplicate-sub"))
+            self.repository.add(DomainUserModel(id="duplicate-user", email="user@example.com", external_id="duplicate-sub", status=UserStatus.REGISTERED))
 
-        self.repository.add(User(id="second-user", email="other@example.com", external_id="second-sub"))
+        self.repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="second-sub", status=UserStatus.REGISTERED))
         with self.sessions() as session:
             self.assertIsNone(session.get(UserModel, "duplicate-user"))
             self.assertEqual(len(session.scalars(select(UserModel)).all()), 2)
 
     def test_duplicate_external_id_is_allowed(self) -> None:
-        self.repository.add(User(id="first-user", email="user@example.com", external_id="same-sub"))
+        self.repository.add(DomainUserModel(id="first-user", email="user@example.com", external_id="same-sub", status=UserStatus.REGISTERED))
 
-        self.repository.add(User(id="second-user", email="other@example.com", external_id="same-sub"))
+        self.repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="same-sub", status=UserStatus.REGISTERED))
 
         with self.sessions() as session:
             self.assertEqual(session.get(UserModel, "first-user").external_id, "same-sub")
@@ -85,7 +179,7 @@ class UserRepositoryTests(unittest.TestCase):
         Base.metadata.drop_all(self.engine)
 
         with self.assertRaises(UserPersistenceError) as error:
-            self.repository.add(User(id="user-id", email="user@example.com", external_id="cognito-sub"))
+            self.repository.add(DomainUserModel(id="user-id", email="user@example.com", external_id="cognito-sub", status=UserStatus.REGISTERED))
 
         self.assertEqual(str(error.exception), "Unable to save user profile")
 
@@ -112,6 +206,37 @@ class UserRepositoryTests(unittest.TestCase):
 
 
 class UserMigrationTests(unittest.TestCase):
+    def test_status_migration_defaults_existing_rows_and_preserves_users(self) -> None:
+        with TemporaryDirectory() as directory:
+            database_url = "sqlite+pysqlite:///" + directory + "/status.db"
+            config = Config(str(Path(__file__).resolve().parents[2] / "src/alembic/alembic.ini"))
+            config.set_main_option("sqlalchemy.url", database_url)
+            command.upgrade(config, "174038895e42")
+            engine = create_database_engine(database_url)
+            try:
+                users = Table("users", MetaData(), autoload_with=engine)
+                with engine.begin() as connection:
+                    connection.execute(users.insert().values(
+                        id="user-id", email="user@example.com", external_id="cognito-sub",
+                        created_at=datetime(2026, 10, 27),
+                    ))
+
+                command.upgrade(config, "head")
+
+                sessions = sessionmaker(bind=engine, expire_on_commit=False)
+                with sessions() as session:
+                    self.assertEqual(session.get(UserModel, "user-id").status, UserStatus.REGISTERED)
+                self.assertFalse(next(
+                    column for column in inspect(engine).get_columns("users") if column["name"] == "status"
+                )["nullable"])
+
+                command.downgrade(config, "174038895e42")
+                self.assertNotIn("status", {column["name"] for column in inspect(engine).get_columns("users")})
+                with engine.connect() as connection:
+                    self.assertEqual(connection.execute(select(users.c.id)).scalar_one(), "user-id")
+            finally:
+                engine.dispose()
+
     def test_external_id_migration_creates_non_unique_index(self) -> None:
         with TemporaryDirectory() as directory:
             database_url = "sqlite+pysqlite:///" + directory + "/migration.db"
@@ -133,8 +258,8 @@ class UserMigrationTests(unittest.TestCase):
 
                 sessions = sessionmaker(bind=engine, expire_on_commit=False)
                 repository = SqlAlchemyUserRepository(sessions)
-                repository.add(User(id="first-user", email="user@example.com", external_id="same-sub"))
-                repository.add(User(id="second-user", email="other@example.com", external_id="same-sub"))
+                repository.add(DomainUserModel(id="first-user", email="user@example.com", external_id="same-sub", status=UserStatus.REGISTERED))
+                repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="same-sub", status=UserStatus.REGISTERED))
                 with sessions() as session:
                     self.assertEqual(session.scalars(select(UserModel.external_id)).all(), ["same-sub", "same-sub"])
 
@@ -171,10 +296,10 @@ class MySqlUserRepositoryTests(unittest.TestCase):
             try:
                 sessions = sessionmaker(bind=connection, expire_on_commit=False)
                 repository = SqlAlchemyUserRepository(sessions)
-                repository.add(User(id="first-user", email="test@example.com", external_id="first-sub"))
+                repository.add(DomainUserModel(id="first-user", email="test@example.com", external_id="first-sub", status=UserStatus.REGISTERED))
                 with self.assertRaises(UserPersistenceError):
-                    repository.add(User(id="duplicate-user", email="test@example.com", external_id="duplicate-sub"))
-                repository.add(User(id="second-user", email="other@example.com", external_id="second-sub"))
+                    repository.add(DomainUserModel(id="duplicate-user", email="test@example.com", external_id="duplicate-sub", status=UserStatus.REGISTERED))
+                repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="second-sub", status=UserStatus.REGISTERED))
 
                 with sessions() as session:
                     self.assertEqual(session.get(UserModel, "first-user").email, "test@example.com")

@@ -31,6 +31,10 @@ class SignUpResult:
 
 class AuthenticationEngine(ABC):
     @abstractmethod
+    def get_authenticated_user_id(self, access_token: str) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
     def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
         raise NotImplementedError
 

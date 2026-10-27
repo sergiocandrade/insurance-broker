@@ -1,0 +1,26 @@
+from domain.exceptions.authentication import AuthenticationError
+from domain.models.user import UserModel, UserStatus
+from domain.repositories.user import UserRepository
+
+
+class UserService:
+    def __init__(self, user_repository: UserRepository) -> None:
+        self.user_repository = user_repository
+
+    def add(self, email: str, external_id: str) -> None:
+        user = UserModel(
+            id=external_id,
+            email=email,
+            external_id=external_id,
+            status=UserStatus.REGISTERED,
+        )
+        self.user_repository.add(user)
+
+    def get_info(self, external_id: str) -> UserModel:
+        user = self.user_repository.get_by_external_id(external_id=external_id)
+        if user is None:
+            raise AuthenticationError("user_profile_not_found", "User profile not found")
+        return user
+
+    def mark_email_confirmed(self, email: str) -> None:
+        self.user_repository.mark_email_confirmed(email=email)
