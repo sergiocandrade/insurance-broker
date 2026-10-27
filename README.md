@@ -20,6 +20,46 @@ docker build -f docker/Dockerfile_BFF -t insurance-broker-bff .
 docker run --rm -p 8510:8510 insurance-broker-bff
 ```
 
+## Cognito Sign-Up
+
+Enable self-service sign-up on the user pool and allow the app client to write
+the `email` attribute. This endpoint accepts email and password and uses the
+email as the Cognito username. Email is limited to 128 characters to match the
+username limit. Use the same email as `username` when signing in. Any other
+required user-pool attributes must be supplied by your Cognito setup.
+
+```sh
+curl -X POST http://localhost:5002/auth/sign-up \
+	-H 'Content-Type: application/json' \
+	-d '{"email":"user@example.com","password":"Example-Password123!"}'
+```
+
+Returns `201` with `user_id`, `user_confirmed`, and optional masked
+`confirmation_destination` and `confirmation_delivery_medium`. It does not
+return authentication tokens. When `user_confirmed` is false, complete Cognito's
+signup-confirmation flow with `POST /auth/sign-up/confirm` before signing in.
+
+Configure the user pool to verify email during signup. Submit the code sent by
+Cognito along with the same email address used to register. No access token is
+required:
+
+```sh
+curl -X POST http://localhost:5002/auth/sign-up/confirm \
+	-H 'Content-Type: application/json' \
+	-d '{"email":"user@example.com","code":"123456"}'
+```
+
+Successful confirmation returns `200`; sign in separately with the email and
+password. Invalid or expired codes return `400`; email alias conflicts return
+`409`; throttling returns `429`. Confirmation never forcibly transfers an email
+alias from another account. Do not log confirmation codes.
+
+Existing usernames return `409`; password-policy failures and invalid signup
+details return `400`; disabled sign-up returns `403`; throttling returns `429`.
+Use HTTPS in production and never log passwords. Rebuild the Docker image with
+`make build-bff` to install the email-validation dependency. Local Uvicorn uses
+port `8510` instead of Compose's `5002`.
+
 ## Cognito Sign-In
 
 Enable `ALLOW_USER_PASSWORD_AUTH` on your Cognito user pool app client.

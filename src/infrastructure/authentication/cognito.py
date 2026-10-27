@@ -12,6 +12,7 @@ from domain.services.authentication import (
     AuthenticationEngine,
     AuthenticationResult,
     AuthenticationTokens,
+    SignUpResult,
 )
 
 
@@ -28,6 +29,69 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             hashlib.sha256,
         ).digest()
         return base64.b64encode(digest).decode("ascii")
+
+    def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            result = client.sign_up(
+                ClientId=self.client_id,
+                Username=username,
+                Password=password,
+                SecretHash=self._secret_hash(username),
+                UserAttributes=[{"Name": "email", "Value": email}],
+            )
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code == "UsernameExistsException":
+                raise AuthenticationError("user_exists", "Username is already registered") from None
+            if code == "InvalidPasswordException":
+                raise AuthenticationError("invalid_password", "Password does not meet the password policy") from None
+            if code == "InvalidParameterException":
+                raise AuthenticationError("invalid_signup_details", "Invalid sign-up details") from None
+            if code in {"NotAuthorizedException", "ForbiddenException"}:
+                raise AuthenticationError("signup_not_allowed", "Sign-up is not permitted") from None
+            if code in {"TooManyRequestsException", "LimitExceededException"}:
+                raise AuthenticationError("throttled", "Too many sign-up attempts") from None
+            raise AuthenticationError("service_error", "Authentication service error") from None
+        except BotoCoreError:
+            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
+
+        delivery = result.get("CodeDeliveryDetails", {})
+        return SignUpResult(
+            user_id=result["UserSub"],
+            user_confirmed=result["UserConfirmed"],
+            confirmation_destination=delivery.get("Destination"),
+            confirmation_delivery_medium=delivery.get("DeliveryMedium"),
+        )
+
+    def confirm_sign_up(self, username: str, code: str) -> None:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            client.confirm_sign_up(
+                ClientId=self.client_id,
+                Username=username,
+                ConfirmationCode=code,
+                SecretHash=self._secret_hash(username),
+                ForceAliasCreation=False,
+            )
+        except ClientError as error:
+            error_code = error.response.get("Error", {}).get("Code")
+            if error_code in {
+                "CodeMismatchException", "ExpiredCodeException", "UserNotFoundException",
+                "NotAuthorizedException", "InvalidParameterException",
+            }:
+                raise AuthenticationError(
+                    "invalid_signup_confirmation", "Invalid or expired sign-up confirmation code",
+                ) from None
+            if error_code == "AliasExistsException":
+                raise AuthenticationError("email_conflict", "Email address cannot be confirmed") from None
+            if error_code == "ForbiddenException":
+                raise AuthenticationError("signup_not_allowed", "Sign-up confirmation is not permitted") from None
+            if error_code in {"TooManyRequestsException", "LimitExceededException", "TooManyFailedAttemptsException"}:
+                raise AuthenticationError("throttled", "Too many sign-up confirmation attempts") from None
+            raise AuthenticationError("service_error", "Authentication service error") from None
+        except BotoCoreError:
+            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
 
     def sign_in(self, username: str, password: str) -> AuthenticationResult:
         auth_parameters = {
@@ -101,6 +165,51 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
 
         return self._authentication_result(result)
+
+    def request_password_reset(self, username: str) -> None:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            client.forgot_password(
+                ClientId=self.client_id,
+                Username=username,
+                SecretHash=self._secret_hash(username),
+            )
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code in {"UserNotFoundException", "NotAuthorizedException", "InvalidParameterException"}:
+                return
+            raise self._password_reset_error(error) from None
+        except BotoCoreError:
+            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
+
+    def confirm_password_reset(self, username: str, code: str, new_password: str) -> None:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            client.confirm_forgot_password(
+                ClientId=self.client_id,
+                Username=username,
+                ConfirmationCode=code,
+                Password=new_password,
+                SecretHash=self._secret_hash(username),
+            )
+        except ClientError as error:
+            raise self._password_reset_error(error) from None
+        except BotoCoreError:
+            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
+
+    @staticmethod
+    def _password_reset_error(error: ClientError) -> AuthenticationError:
+        code = error.response.get("Error", {}).get("Code")
+        if code in {
+            "CodeMismatchException", "ExpiredCodeException", "UserNotFoundException",
+            "NotAuthorizedException", "InvalidParameterException",
+        }:
+            return AuthenticationError("invalid_reset_code", "Invalid or expired password reset code")
+        if code in {"InvalidPasswordException", "PasswordHistoryPolicyViolationException"}:
+            return AuthenticationError("invalid_password", "Password does not meet the password policy")
+        if code in {"TooManyRequestsException", "LimitExceededException", "TooManyFailedAttemptsException"}:
+            return AuthenticationError("throttled", "Too many password reset attempts")
+        return AuthenticationError("service_error", "Authentication service error")
 
     @staticmethod
     def _authentication_result(result: dict[str, Any]) -> AuthenticationResult:

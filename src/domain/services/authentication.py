@@ -21,7 +21,23 @@ class AuthenticationChallenge:
 AuthenticationResult = AuthenticationTokens | AuthenticationChallenge
 
 
+@dataclass(frozen=True)
+class SignUpResult:
+    user_id: str
+    user_confirmed: bool
+    confirmation_destination: str | None = None
+    confirmation_delivery_medium: str | None = None
+
+
 class AuthenticationEngine(ABC):
+    @abstractmethod
+    def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def confirm_sign_up(self, username: str, code: str) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def sign_in(self, username: str, password: str) -> AuthenticationResult:
         raise NotImplementedError
@@ -34,4 +50,12 @@ class AuthenticationEngine(ABC):
         session: str,
         required_attributes: dict[str, str],
     ) -> AuthenticationResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def request_password_reset(self, username: str) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def confirm_password_reset(self, username: str, code: str, new_password: str) -> None:
         raise NotImplementedError
