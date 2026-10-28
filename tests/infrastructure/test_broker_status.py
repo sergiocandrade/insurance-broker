@@ -11,9 +11,11 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateTable
 
-from domain.models.broker import BrokerStatus
+from domain.exceptions.domain import NotFoundException
+from domain.models.broker import BrokerModel as DomainBrokerModel, BrokerStatus
+from domain.services.broker import BrokerService
 from infrastructure.persistence.sqlalchemy.repositories.broker_repository import SqlAlchemyBrokerRepository
-from infrastructure.persistence.sqlalchemy.models import Base, BrokerModel, UserBrokerModel, UserModel
+from infrastructure.persistence.sqlalchemy.models import Base, BrokerModel
 
 
 class BrokerStatusTests(unittest.TestCase):
@@ -25,15 +27,36 @@ class BrokerStatusTests(unittest.TestCase):
         self.created_at = datetime(2026, 10, 27)
         self.repository = SqlAlchemyBrokerRepository(self.sessions)
 
+    def test_update_persists_domain_status_and_activation_time(self) -> None:
+        with self.sessions.begin() as session:
+            session.add(BrokerModel(id="broker-id", created_at=self.created_at))
+
+        activated_at = datetime(2026, 10, 28)
+        self.repository.update(DomainBrokerModel(
+            id="broker-id", status=BrokerStatus.ACTIVE, created_at=datetime(2030, 1, 1),
+            activated_at=activated_at,
+        ))
+
+        with self.sessions() as session:
+            saved = session.get(BrokerModel, "broker-id")
+            self.assertEqual(saved.status, BrokerStatus.ACTIVE)
+            self.assertEqual(saved.activated_at, activated_at)
+            self.assertEqual(saved.created_at, self.created_at)
+
+    def test_update_rejects_missing_broker(self) -> None:
+        with self.assertRaises(NotFoundException):
+            self.repository.update(DomainBrokerModel(
+                id="missing-broker", status=BrokerStatus.ACTIVE, created_at=self.created_at,
+            ))
+
     def test_broker_activation_sets_activated_at(self) -> None:
         with self.sessions.begin() as session:
-            session.add_all([
-                UserModel(id="user-id", email="user@example.com", name="User"),
-                BrokerModel(id="broker-id", created_at=self.created_at),
-            ])
-            session.add(UserBrokerModel(user_id="user-id", broker_id="broker-id"))
+            session.add(BrokerModel(id="broker-id", created_at=self.created_at))
 
-        activated = self.repository.activate("broker-id", "user-id")
+        broker = DomainBrokerModel(
+            id="broker-id", status=BrokerStatus.PENDING, created_at=self.created_at,
+        )
+        activated = BrokerService(self.repository).activate(broker, user_id="user-id")
 
         with self.sessions() as session:
             saved = session.get(BrokerModel, "broker-id")

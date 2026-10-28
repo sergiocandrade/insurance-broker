@@ -12,6 +12,8 @@ class BrokerService:
     def list_brokers_for_user(self, user_id: str) -> list[BrokerModel]:
         return self.broker_repository.list_brokers_for_user(user_id=user_id)
 
+    def update(self, broker: BrokerModel) -> None:
+        self.broker_repository.update(broker=broker)
 
     def activate(self, broker: BrokerModel, user_id: str) -> BrokerModel:
         if broker.status == BrokerStatus.ACTIVE:
@@ -20,4 +22,6 @@ class BrokerService:
         broker.status = BrokerStatus.ACTIVE
         broker.activated_at = datetime.now(UTC)
         
-        return self.broker_repository.activate(broker_id=broker.id, user_id=user_id)
+        self.broker_repository.update(broker=broker)
+
+        return broker

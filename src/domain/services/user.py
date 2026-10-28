@@ -17,7 +17,7 @@ class UserService:
             raise UserAlreadyRegistredException()
         return user
     
-    def activate_user(self, user: UserModel, external_id: str) -> None:
+    def activate_user(self, user: UserModel, external_id: str) -> UserModel:
         
         if user.status != UserStatus.PENDING:
             raise UserNotPreRegistredException()
@@ -26,6 +26,7 @@ class UserService:
         user.status = UserStatus.REGISTERED
         user.activated_at = datetime.now(UTC)
         self.user_repository.update(user=user)
+        return user
 
     def get_info(self, external_id: str) -> UserModel:
         user = self.user_repository.get_by_external_id(external_id=external_id)

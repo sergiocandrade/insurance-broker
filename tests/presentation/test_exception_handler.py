@@ -1,15 +1,12 @@
 import unittest
 from unittest.mock import Mock
 
-from dependency_injector import providers
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, ValidationError
 
 from application.usecase_exception import UseCaseException
 from domain.exceptions.authentication import AuthenticationError
-from domain.exceptions.broker import BrokerAccessDeniedError, BrokerNotFoundError
-from domain.exceptions.domain import DomainException, NotFoundException
+from domain.exceptions.domain import DomainException, ForbiddenException, NotFoundException
 from infrastructure.persistence.exceptions import PersistenceError
 from domain.exceptions.user import UserNotFoundException
 from presentation.apis.bff.exception_handler import AUTHENTICATION_STATUS_CODES, handle_exceptions, register_exception_handlers
@@ -23,8 +20,7 @@ class ExceptionHandlerTests(unittest.TestCase):
             (UseCaseException("Signup is not allowed"), 400),
             (NotFoundException("Broker"), 404),
             (UserNotFoundException(), 404),
-            (BrokerNotFoundError("Broker not found"), 404),
-            (BrokerAccessDeniedError("Access denied"), 403),
+            (ForbiddenException("Access denied"), 403),
         ):
             with self.subTest(error=type(error).__name__):
                 with self.assertRaises(HTTPException) as translated:
@@ -55,12 +51,12 @@ class ExceptionHandlerTests(unittest.TestCase):
                         raise error
                 self.assertNotIn("private", str(translated.exception.detail))
 
-    def test_endpoint_can_supply_safe_persistence_context(self) -> None:
+    def test_persistence_errors_use_generic_safe_detail(self) -> None:
         with self.assertRaises(HTTPException) as translated:
-            with handle_exceptions(persistence_detail="Registration partially completed. Contact support."):
+            with handle_exceptions():
                 raise PersistenceError("private database details")
         self.assertEqual(translated.exception.status_code, 503)
-        self.assertEqual(translated.exception.detail, "Registration partially completed. Contact support.")
+        self.assertEqual(translated.exception.detail, "Persistence service unavailable")
 
     def test_unknown_authentication_reason_is_safe(self) -> None:
         with self.assertRaises(HTTPException) as translated:
@@ -76,21 +72,6 @@ class ExceptionHandlerTests(unittest.TestCase):
                     with handle_exceptions():
                         raise error
                 self.assertIs(raised.exception, error)
-
-    def test_configuration_validation_is_only_translated_when_requested(self) -> None:
-        class Configuration(BaseModel):
-            required_value: str
-
-        with self.assertRaises(HTTPException) as translated:
-            with handle_exceptions(configuration_detail="Service is not configured"):
-                Configuration.model_validate({})
-        self.assertEqual(translated.exception.status_code, 503)
-        self.assertEqual(translated.exception.detail, "Service is not configured")
-
-        with self.assertRaises(ValidationError):
-            with handle_exceptions():
-                Configuration.model_validate({})
-
 
 class EndpointExceptionHandlerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -140,9 +121,9 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
                 self.assertEqual(response.json(), {"detail": "Operation is not allowed"})
 
-    def test_persistence_errors_keep_safe_partial_registration_context(self) -> None:
-        for path, provider_name, body, expected_detail in (
-            ("/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}, "Registration succeeded in Cognito"),
+    def test_persistence_errors_use_generic_safe_detail(self) -> None:
+        for path, provider_name, body in (
+            ("/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}),
         ):
             with self.subTest(path=path):
                 use_case = Mock()
@@ -150,21 +131,8 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
                 with getattr(app.state.container, provider_name).override(use_case):
                     response = self.client.post(path, json=body)
                 self.assertEqual(response.status_code, 503)
-                self.assertIn(expected_detail, response.json()["detail"])
+                self.assertEqual(response.json()["detail"], "Persistence service unavailable")
                 self.assertNotIn("private", response.text)
-
-    def test_configuration_errors_during_dependency_creation_become_503(self) -> None:
-        class Configuration(BaseModel):
-            required_value: str
-
-        def invalid_configuration():
-            return Configuration.model_validate({})
-
-        with app.state.container.sign_in_use_case.override(providers.Callable(invalid_configuration)):
-            response = self.client.post("/auth/sign-in", json=self.credentials)
-
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json(), {"detail": "Authentication is not configured"})
 
     def test_request_validation_still_returns_422(self) -> None:
         use_case = Mock()
@@ -207,7 +175,7 @@ class GlobalExceptionHandlerTests(unittest.TestCase):
 
     def test_domain_errors_from_dependencies_are_intercepted(self) -> None:
         def failing_dependency():
-            raise BrokerAccessDeniedError("Access denied")
+            raise ForbiddenException("Access denied")
 
         @self.app.get("/dependency-failure")
         def failure(dependency=Depends(failing_dependency)):
@@ -246,20 +214,3 @@ class GlobalExceptionHandlerTests(unittest.TestCase):
                     response = client.get(path)
                     self.assertEqual(response.status_code, 500)
                     self.assertNotIn("private", response.text)
-
-    def test_configuration_errors_on_non_auth_routes_use_generic_detail(self) -> None:
-        class Configuration(BaseModel):
-            required_value: str
-
-        def invalid_configuration():
-            return Configuration.model_validate({})
-
-        @self.app.get("/configuration-error")
-        def failure(configuration=Depends(invalid_configuration)):
-            return {"status": "unreachable"}
-
-        with TestClient(self.app) as client:
-            response = client.get("/configuration-error")
-
-        self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.json(), {"detail": "Service is not configured"})

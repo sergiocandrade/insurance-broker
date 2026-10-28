@@ -10,7 +10,7 @@ container = Container()
 container.wire(modules=[auth])
 
 app = FastAPI(title="Insurance Broker BFF")
-#register_exception_handlers(app)
+register_exception_handlers(app)
 app.state.container = container
 app.include_router(auth.router)
 
