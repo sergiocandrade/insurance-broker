@@ -1,7 +1,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, ForeignKeyConstraint, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.persistence.sqlalchemy.models.user_model import Base
@@ -9,6 +9,14 @@ from infrastructure.persistence.sqlalchemy.models.user_model import Base
 
 class PolicyModel(Base):
     __tablename__ = "policies"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["insurer_id", "insurance_product_id"],
+            ["insurer_products.insurer_id", "insurer_products.product_id"],
+            name="fk_policies_insurer_product_insurer_products",
+            ondelete="RESTRICT",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     customer_id: Mapped[str] = mapped_column(
@@ -34,6 +42,7 @@ class PolicyModel(Base):
         nullable=False,
         index=True,
     )
+    insurer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,

@@ -7,6 +7,10 @@ from fastapi.testclient import TestClient
 
 from application.use_cases.list_policies import ListPoliciesUseCase
 from domain.exceptions.broker import BrokerNotFoundException
+from domain.models.insurance_branch import InsuranceBranchModel
+from domain.models.insurance_category import InsuranceCategoryModel
+from domain.models.insurance_product import InsuranceProductModel
+from domain.models.insurer import InsurerModel
 from domain.models.policy import PolicyModel
 from presentation.apis.bff.main import app
 
@@ -21,9 +25,24 @@ class PoliciesApiTests(unittest.TestCase):
         use_case.execute.return_value = (
             [PolicyModel(
                 id="policy-id", customer_id="customer-id", amount=Decimal("125.50"),
-                insurance_product_id="product-id", policy_number="POL-001",
+                insurance_product_id="product-id", insurer_id="insurer-id", policy_number="POL-001",
                 start_date=date(2026, 1, 1), end_date=date(2027, 1, 1),
                 status="ACTIVE", created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                insurer=InsurerModel(
+                    id="insurer-id", name="Example Insurer", created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                ),
+                insurance_product=InsuranceProductModel(
+                    id="product-id", branch_id="branch-id", name="Health Cover",
+                    product_code="HLT-001", created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                    insurance_branch=InsuranceBranchModel(
+                        id="branch-id", category_id="category-id", name="Individual",
+                        created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                        insurance_category=InsuranceCategoryModel(
+                            id="category-id", name="Health",
+                            created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                        ),
+                    ),
+                ),
             )],
             7,
         )
@@ -38,6 +57,23 @@ class PoliciesApiTests(unittest.TestCase):
         self.assertEqual(response.json()["page"], 2)
         self.assertEqual(response.json()["page_size"], 5)
         self.assertEqual(response.json()["items"][0]["policy_number"], "POL-001")
+        self.assertEqual(response.json()["items"][0]["insurer"]["id"], "insurer-id")
+        self.assertEqual(response.json()["items"][0]["insurer"]["name"], "Example Insurer")
+        self.assertEqual(response.json()["items"][0]["insurance_product"]["id"], "product-id")
+        self.assertEqual(response.json()["items"][0]["insurance_product"]["name"], "Health Cover")
+        self.assertEqual(
+            response.json()["items"][0]["insurance_product"]["insurance_branch"]["name"],
+            "Individual",
+        )
+        self.assertEqual(
+            response.json()["items"][0]["insurance_product"]["insurance_branch"]["insurance_category"]["name"],
+            "Health",
+        )
+        self.assertNotIn("branch_id", response.json()["items"][0]["insurance_product"])
+        self.assertNotIn("category_id", response.json()["items"][0]["insurance_product"]["insurance_branch"])
+        self.assertNotIn("insurance_product_id", response.json()["items"][0])
+        self.assertNotIn("insurer_id", response.json()["items"][0])
+        self.assertNotIn("insurers", response.json()["items"][0]["insurance_product"])
         use_case.execute.assert_called_once_with(
             access_token="token", page=2, page_size=5,
             customer_id="customer-id", broker_id="broker-id",
@@ -62,5 +98,5 @@ class PoliciesApiTests(unittest.TestCase):
                 headers={"Authorization": "Bearer token"},
             )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json(), {"detail": "Access to this broker is denied"})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {"detail": "Broker not found"})

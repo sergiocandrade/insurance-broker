@@ -13,6 +13,7 @@ from infrastructure.persistence.sqlalchemy.models import (
     InsuranceCategoryModel,
     InsuranceProductModel,
     InsurerModel,
+    InsurerProductModel,
     PolicyModel,
 )
 from infrastructure.persistence.sqlalchemy.repositories.policy_repository import SqlAlchemyPolicyRepository
@@ -57,10 +58,12 @@ class PolicyRepositoryTests(unittest.TestCase):
                 id="product-id", branch_id="branch-id", name="Product", product_code="P-001",
             ))
         with self.sessions.begin() as session:
+            session.add(InsurerProductModel(insurer_id="insurer-id", product_id="product-id"))
+        with self.sessions.begin() as session:
             session.add_all([
                 PolicyModel(
                     id=f"policy-{number}", customer_id=customer_id, amount=Decimal("100.00"),
-                    insurance_product_id="product-id", policy_number=f"POL-{number:03}",
+                    insurance_product_id="product-id", insurer_id="insurer-id", policy_number=f"POL-{number:03}",
                     start_date=date(2026, 1, 1), end_date=date(2027, 1, 1),
                 )
                 for number, customer_id in ((1, "customer-a1"), (2, "customer-a1"),
@@ -74,6 +77,15 @@ class PolicyRepositoryTests(unittest.TestCase):
 
         self.assertEqual(total, 2)
         self.assertEqual([policy.policy_number for policy in policies], ["POL-002"])
+        self.assertEqual(policies[0].insurance_product.name, "Product")
+        self.assertEqual(policies[0].insurance_product.product_code, "P-001")
+        self.assertEqual(policies[0].insurance_product.insurance_branch.name, "Branch")
+        self.assertEqual(
+            policies[0].insurance_product.insurance_branch.insurance_category.name,
+            "Category",
+        )
+        self.assertEqual(policies[0].insurer.id, "insurer-id")
+        self.assertEqual(policies[0].insurer.name, "Insurer")
 
     def test_lists_across_accessible_brokers(self) -> None:
         policies, total = self.repository.list_for_brokers(
