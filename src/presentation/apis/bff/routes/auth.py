@@ -3,17 +3,15 @@ from collections.abc import Callable
 from dependency_injector.wiring import Provider, inject
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import ValidationError
 
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
+from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
 from application.use_cases.sign_in import SignInUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from presentation.apis.bff.containers import Container
-from domain.exceptions.authentication import AuthenticationError
-from domain.exceptions.persistence import UserPersistenceError
 from domain.services.authentication import AuthenticationResult, AuthenticationTokens
 from presentation.apis.bff.dtos.auth import (
     ConfirmPasswordResetRequest,
@@ -29,6 +27,7 @@ from presentation.apis.bff.dtos.auth import (
     SignUpRequest,
     SignUpResponse,
 )
+from presentation.apis.bff.dtos.broker import BrokerResponse
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -51,46 +50,37 @@ def get_access_token(
 def get_current_user_use_case(
     use_case_provider: Callable[[], GetCurrentUserUseCase] = Depends(Provider[Container.get_current_user_use_case]),
 ) -> GetCurrentUserUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="User profile service is not configured") from None
-    except UserPersistenceError:
-        raise HTTPException(status_code=503, detail="User database is not configured") from None
+    return use_case_provider()
+
+
+@inject
+def get_current_brokers_use_case(
+    use_case_provider: Callable[[], GetCurrentBrokersUseCase] = Depends(
+        Provider[Container.get_current_brokers_use_case],
+    ),
+) -> GetCurrentBrokersUseCase:
+    return use_case_provider()
 
 
 @inject
 def get_sign_in_use_case(
     use_case_provider: Callable[[], SignInUseCase] = Depends(Provider[Container.sign_in_use_case]),
 ) -> SignInUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
+    return use_case_provider()
 
 
 @inject
 def get_sign_up_use_case(
     use_case_provider: Callable[[], SignUpUseCase] = Depends(Provider[Container.sign_up_use_case]),
 ) -> SignUpUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
-    except UserPersistenceError:
-        raise HTTPException(status_code=503, detail="User database is not configured") from None
+    return use_case_provider()
 
 
 @inject
 def get_confirm_sign_up_use_case(
     use_case_provider: Callable[[], ConfirmSignUpUseCase] = Depends(Provider[Container.confirm_sign_up_use_case]),
 ) -> ConfirmSignUpUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
-    except UserPersistenceError:
-        raise HTTPException(status_code=503, detail="User database is not configured") from None
+    return use_case_provider()
 
 
 @inject
@@ -99,10 +89,7 @@ def get_complete_new_password_use_case(
         Provider[Container.complete_new_password_use_case],
     ),
 ) -> CompleteNewPasswordUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
+    return use_case_provider()
 
 
 @inject
@@ -111,10 +98,7 @@ def get_request_password_reset_use_case(
         Provider[Container.request_password_reset_use_case],
     ),
 ) -> RequestPasswordResetUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
+    return use_case_provider()
 
 
 @inject
@@ -123,31 +107,7 @@ def get_confirm_password_reset_use_case(
         Provider[Container.confirm_password_reset_use_case],
     ),
 ) -> ConfirmPasswordResetUseCase:
-    try:
-        return use_case_provider()
-    except ValidationError:
-        raise HTTPException(status_code=503, detail="Authentication is not configured") from None
-
-
-def authentication_http_error(error: AuthenticationError) -> HTTPException:
-    status_codes = {
-        "invalid_credentials": 401,
-        "access_forbidden": 403,
-        "user_profile_not_found": 404,
-        "account_action_required": 403,
-        "invalid_password": 400,
-        "invalid_signup_details": 400,
-        "invalid_signup_confirmation": 400,
-        "user_exists": 409,
-        "signup_not_allowed": 403,
-        "invalid_challenge": 400,
-        "invalid_reset_code": 400,
-        "email_conflict": 409,
-        "throttled": 429,
-        "service_error": 502,
-        "service_unavailable": 503,
-    }
-    return HTTPException(status_code=status_codes[error.reason], detail=str(error))
+    return use_case_provider()
 
 
 @router.get("/me", response_model=CurrentUserResponse)
@@ -156,19 +116,23 @@ def get_current_user(
     access_token: str = Depends(get_access_token),
     use_case: GetCurrentUserUseCase = Depends(get_current_user_use_case),
 ) -> CurrentUserResponse:
-    try:
-        user = use_case.execute(access_token=access_token)
-    except AuthenticationError as error:
-        http_error = authentication_http_error(error)
-        if http_error.status_code == 401:
-            http_error.headers = {"WWW-Authenticate": "Bearer"}
-        raise http_error from None
-    except UserPersistenceError as e:
-        raise HTTPException(status_code=503, detail=f"User profile service unavailable: {e}") from None
+    user = use_case.execute(access_token=access_token)
 
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return CurrentUserResponse.model_validate(user)
+
+
+@router.get("/me/brokers", response_model=list[BrokerResponse])
+def get_current_brokers(
+    response: Response,
+    access_token: str = Depends(get_access_token),
+    use_case: GetCurrentBrokersUseCase = Depends(get_current_brokers_use_case),
+) -> list[BrokerResponse]:
+    brokers = use_case.execute(access_token=access_token)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return [BrokerResponse.model_validate(broker) for broker in brokers]
 
 
 @router.post("/sign-up", response_model=SignUpResponse, status_code=201)
@@ -177,25 +141,17 @@ def sign_up(
     response: Response,
     use_case: SignUpUseCase = Depends(get_sign_up_use_case),
 ) -> SignUpResponse:
-    try:
-        result = use_case.execute(
-            email=str(credentials.email),
-            password=credentials.password.get_secret_value(),
-        )
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
-    except UserPersistenceError as error:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Registration succeeded in Cognito, but the user profile could not be saved. Contact support before retrying. {error}",
-        ) from None
+    result = use_case.execute(
+        email=str(credentials.email),
+        password=credentials.password.get_secret_value(),
+    )
 
     response.headers["Cache-Control"] = "no-store"
     return SignUpResponse(
         user_id=result.user_id,
         user_confirmed=result.user_confirmed,
-        confirmation_destination=result.confirmation_destination,
-        confirmation_delivery_medium=result.confirmation_delivery_medium,
+        # confirmation_destination=result.confirmation_destination,  # Removed for new implementation
+        # confirmation_delivery_medium=result.confirmation_delivery_medium,  # Removed for new implementation
     )
 
 
@@ -205,15 +161,7 @@ def confirm_sign_up(
     response: Response,
     use_case: ConfirmSignUpUseCase = Depends(get_confirm_sign_up_use_case),
 ) -> ConfirmSignUpResponse:
-    try:
-        use_case.execute(email=str(credentials.email), code=credentials.code.get_secret_value())
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
-    except UserPersistenceError:
-        raise HTTPException(
-            status_code=503,
-            detail="Email confirmed in Cognito, but registration status could not be saved. Contact support before retrying.",
-        ) from None
+    use_case.execute(email=str(credentials.email), code=credentials.code.get_secret_value())
 
     response.headers["Cache-Control"] = "no-store"
     return ConfirmSignUpResponse(message="Sign-up confirmed successfully. You can now sign in.")
@@ -225,14 +173,10 @@ def sign_in(
     response: Response,
     use_case: SignInUseCase = Depends(get_sign_in_use_case),
 ) -> SignInTokens | SignInChallenge:
-    
-    try:
-        result = use_case.execute(
-            username=credentials.username,
-            password=credentials.password.get_secret_value(),
-        )
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
+    result = use_case.execute(
+        username=credentials.username,
+        password=credentials.password.get_secret_value(),
+    )
 
     return authentication_response(result, response)
 
@@ -243,15 +187,12 @@ def complete_new_password(
     response: Response,
     use_case: CompleteNewPasswordUseCase = Depends(get_complete_new_password_use_case),
 ) -> SignInTokens | SignInChallenge:
-    try:
-        result = use_case.execute(
-            username=credentials.username,
-            new_password=credentials.new_password.get_secret_value(),
-            session=credentials.session.get_secret_value(),
-            required_attributes=credentials.required_attributes,
-        )
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
+    result = use_case.execute(
+        username=credentials.username,
+        new_password=credentials.new_password.get_secret_value(),
+        session=credentials.session.get_secret_value(),
+        required_attributes=credentials.required_attributes,
+    )
 
     return authentication_response(result, response)
 
@@ -262,10 +203,7 @@ def request_password_reset(
     response: Response,
     use_case: RequestPasswordResetUseCase = Depends(get_request_password_reset_use_case),
 ) -> PasswordResetResponse:
-    try:
-        use_case.execute(username=credentials.username)
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
+    use_case.execute(username=credentials.username)
 
     response.headers["Cache-Control"] = "no-store"
     return PasswordResetResponse(
@@ -279,14 +217,11 @@ def confirm_password_reset(
     response: Response,
     use_case: ConfirmPasswordResetUseCase = Depends(get_confirm_password_reset_use_case),
 ) -> PasswordResetResponse:
-    try:
-        use_case.execute(
-            username=credentials.username,
-            code=credentials.code.get_secret_value(),
-            new_password=credentials.new_password.get_secret_value(),
-        )
-    except AuthenticationError as error:
-        raise authentication_http_error(error) from None
+    use_case.execute(
+        username=credentials.username,
+        code=credentials.code.get_secret_value(),
+        new_password=credentials.new_password.get_secret_value(),
+    )
 
     response.headers["Cache-Control"] = "no-store"
     return PasswordResetResponse(message="Password reset successfully. Sign in with your new password.")

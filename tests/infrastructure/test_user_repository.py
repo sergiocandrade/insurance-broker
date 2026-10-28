@@ -14,13 +14,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from domain.models.user import UserModel as DomainUserModel, UserStatus
-from domain.exceptions.persistence import UserPersistenceError
+from infrastructure.persistence.exceptions import PersistenceError
 from domain.services.authentication import AuthenticationEngine, SignUpResult
 from infrastructure.config.settings import DatabaseSettings
-from infrastructure.persistence.database import create_database_engine
-from infrastructure.persistence.models import Base, UserModel
-from infrastructure.persistence.user_mapper import UserMapper
-from infrastructure.persistence.user_repository import SqlAlchemyUserRepository
+from infrastructure.persistence.sqlalchemy.database import create_database_engine
+from infrastructure.persistence.sqlalchemy.models.user_model import Base, UserModel
+from infrastructure.persistence.sqlalchemy.user_mapper import UserMapper
+from infrastructure.persistence.sqlalchemy.repositories.user_repository import SqlAlchemyUserRepository
 from presentation.apis.bff.containers import Container
 
 
@@ -95,13 +95,13 @@ class UserRepositoryTests(unittest.TestCase):
             id="second-user", email="other@example.com", external_id="same-sub", status=UserStatus.COMPLETED,
         ))
 
-        with self.assertRaises(UserPersistenceError):
+        with self.assertRaises(PersistenceError):
             self.repository.get_by_external_id("same-sub")
 
     def test_get_by_external_id_sanitizes_database_errors(self) -> None:
         Base.metadata.drop_all(self.engine)
 
-        with self.assertRaises(UserPersistenceError) as error:
+        with self.assertRaises(PersistenceError) as error:
             self.repository.get_by_external_id("cognito-sub")
 
         self.assertEqual(str(error.exception), "Unable to load user profile")
@@ -144,13 +144,13 @@ class UserRepositoryTests(unittest.TestCase):
             self.assertEqual(session.get(UserModel, "user-id").status, UserStatus.COMPLETED)
 
     def test_email_confirmation_requires_existing_user(self) -> None:
-        with self.assertRaises(UserPersistenceError):
+        with self.assertRaises(PersistenceError):
             self.repository.mark_email_confirmed("missing@example.com")
 
     def test_email_confirmation_database_errors_are_sanitized(self) -> None:
         Base.metadata.drop_all(self.engine)
 
-        with self.assertRaises(UserPersistenceError) as error:
+        with self.assertRaises(PersistenceError) as error:
             self.repository.mark_email_confirmed("user@example.com")
 
         self.assertEqual(str(error.exception), "Unable to update user registration status")
@@ -158,7 +158,7 @@ class UserRepositoryTests(unittest.TestCase):
     def test_duplicate_email_rolls_back_and_next_transaction_succeeds(self) -> None:
         self.repository.add(DomainUserModel(id="first-user", email="user@example.com", external_id="first-sub", status=UserStatus.REGISTERED))
 
-        with self.assertRaises(UserPersistenceError):
+        with self.assertRaises(PersistenceError):
             self.repository.add(DomainUserModel(id="duplicate-user", email="user@example.com", external_id="duplicate-sub", status=UserStatus.REGISTERED))
 
         self.repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="second-sub", status=UserStatus.REGISTERED))
@@ -178,7 +178,7 @@ class UserRepositoryTests(unittest.TestCase):
     def test_missing_table_returns_sanitized_error(self) -> None:
         Base.metadata.drop_all(self.engine)
 
-        with self.assertRaises(UserPersistenceError) as error:
+        with self.assertRaises(PersistenceError) as error:
             self.repository.add(DomainUserModel(id="user-id", email="user@example.com", external_id="cognito-sub", status=UserStatus.REGISTERED))
 
         self.assertEqual(str(error.exception), "Unable to save user profile")
@@ -297,7 +297,7 @@ class MySqlUserRepositoryTests(unittest.TestCase):
                 sessions = sessionmaker(bind=connection, expire_on_commit=False)
                 repository = SqlAlchemyUserRepository(sessions)
                 repository.add(DomainUserModel(id="first-user", email="test@example.com", external_id="first-sub", status=UserStatus.REGISTERED))
-                with self.assertRaises(UserPersistenceError):
+                with self.assertRaises(PersistenceError):
                     repository.add(DomainUserModel(id="duplicate-user", email="test@example.com", external_id="duplicate-sub", status=UserStatus.REGISTERED))
                 repository.add(DomainUserModel(id="second-user", email="other@example.com", external_id="second-sub", status=UserStatus.REGISTERED))
 

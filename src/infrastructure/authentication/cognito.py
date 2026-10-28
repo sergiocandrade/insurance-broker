@@ -17,10 +17,11 @@ from domain.services.authentication import (
 
 
 class CognitoAuthenticationEngine(AuthenticationEngine):
-    def __init__(self, region: str, client_id: str, client_secret: str) -> None:
+    def __init__(self, region: str, client_id: str, client_secret: str, user_pool_id: str) -> None:
         self.region = region
         self.client_id = client_id
         self.client_secret = client_secret
+        self.user_pool_id = user_pool_id
 
     def _secret_hash(self, username: str) -> str:
         digest = hmac.new(
@@ -56,12 +57,27 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
     def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
         try:
             client = boto3.client("cognito-idp", region_name=self.region)
-            result = client.sign_up(
-                ClientId=self.client_id,
+            result = client.admin_create_user(
+                UserPoolId=self.user_pool_id,
+                Username=username,
+                TemporaryPassword='YourSecurePassword123!',
+                UserAttributes=[
+                    {
+                        "Name": "email", 
+                        "Value": email},
+                    {
+                        "Name": "email_verified",
+                        "Value": "true",
+                    },
+            ],
+                MessageAction='SUPPRESS',
+            )
+
+            client.admin_set_user_password(
+                UserPoolId=self.user_pool_id,
                 Username=username,
                 Password=password,
-                SecretHash=self._secret_hash(username),
-                UserAttributes=[{"Name": "email", "Value": email}],
+                Permanent=True
             )
         except ClientError as error:
             code = error.response.get("Error", {}).get("Code")
@@ -76,16 +92,29 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             if code in {"TooManyRequestsException", "LimitExceededException"}:
                 raise AuthenticationError("throttled", "Too many sign-up attempts") from None
             raise AuthenticationError("service_error", "Authentication service error") from None
-        except BotoCoreError:
+        except BotoCoreError as e:
             raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
 
-        delivery = result.get("CodeDeliveryDetails", {})
         return SignUpResult(
-            user_id=result["UserSub"],
-            user_confirmed=result["UserConfirmed"],
-            confirmation_destination=delivery.get("Destination"),
-            confirmation_delivery_medium=delivery.get("DeliveryMedium"),
+            user_id=result["User"]["Username"],
+            user_confirmed=True,
+            confirmation_destination=None,  # Removed for new implementation
+            confirmation_delivery_medium=None,  # Removed for new implementation
         )
+
+    def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:
+        try:
+            client = boto3.client("cognito-idp", region_name=self.region)
+            if not account_confirmed:
+                client.admin_confirm_sign_up(UserPoolId=self.user_pool_id, Username=username)            
+        except ClientError:
+            raise AuthenticationError(
+                "service_error", "User was created, but automatic email confirmation failed",
+            ) from None
+        except BotoCoreError:
+            raise AuthenticationError(
+                "service_unavailable", "User was created, but the email confirmation service is unavailable",
+            ) from None
 
     def confirm_sign_up(self, username: str, code: str) -> None:
         try:

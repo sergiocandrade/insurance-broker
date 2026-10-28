@@ -72,8 +72,7 @@ curl -X POST http://localhost:5002/auth/sign-up \
 	-d '{"email":"user@example.com","password":"Example-Password123!"}'
 ```
 
-Returns `201` with `user_id`, `user_confirmed`, and optional masked
-`confirmation_destination` and `confirmation_delivery_medium`. It does not
+Returns `201` with `user_id` and `user_confirmed`. It does not
 return authentication tokens. When `user_confirmed` is false, complete Cognito's
 signup-confirmation flow with `POST /auth/sign-up/confirm` before signing in.
 

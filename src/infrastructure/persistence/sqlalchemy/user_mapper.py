@@ -1,7 +1,7 @@
 from datetime import UTC
 
 from domain.models.user import UserModel as DomainUserModel, UserStatus
-from infrastructure.persistence.models import UserModel as SqlAlchemyUserModel
+from infrastructure.persistence.sqlalchemy.models.user_model import UserModel as SqlAlchemyUserModel
 
 
 class UserMapper:

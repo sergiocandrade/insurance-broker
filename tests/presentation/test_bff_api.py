@@ -1,3 +1,40 @@
+    def test_signup_result_contains_only_identity_and_confirmation_status(self) -> None:
+        result = SignUpResult(user_id="user-id", user_confirmed=True)
+
+        self.assertEqual(asdict(result), {"user_id": "user-id", "user_confirmed": True})
+
+    def test_admin_signup_returns_result_without_delivery_fields(self) -> None:
+        with patch.object(cognito_module.boto3, "client") as client_factory:
+            cognito = client_factory.return_value
+            cognito.admin_create_user.return_value = {"User": {"Username": "user-id"}}
+            engine = cognito_module.CognitoAuthenticationEngine(
+                region="us-east-1", client_id="test-client", client_secret="test-secret", user_pool_id="test-pool",
+            )
+
+            result = engine.sign_up(username="user@example.com", email="user@example.com", password="test-password")
+
+        self.assertEqual(asdict(result), {"user_id": "user-id", "user_confirmed": True})
+        cognito.admin_set_user_password.assert_called_once_with(
+            UserPoolId="test-pool", Username="user@example.com", Password="test-password", Permanent=True,
+        )
+
+    def test_signup_endpoint_returns_only_result_fields(self) -> None:
+        use_case = Mock(spec=SignUpUseCase)
+        use_case.execute.return_value = SignUpResult(user_id="user-id", user_confirmed=True)
+
+        with app.state.container.sign_up_use_case.override(use_case), TestClient(app) as client:
+            response = client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"user_id": "user-id", "user_confirmed": True})
+
+    def test_signup_response_schema_matches_result_fields(self) -> None:
+        schema = app.openapi()["components"]["schemas"]["SignUpResponse"]
+
+        self.assertEqual(set(schema["properties"]), {"user_id", "user_confirmed"})
+
+
+class SettingsTests(unittest.TestCase):
 import base64
 import hashlib
 import hmac
@@ -16,7 +53,7 @@ from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.sign_up import SignUpUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
 from domain.exceptions.authentication import AuthenticationError
-from domain.exceptions.persistence import UserPersistenceError
+from infrastructure.persistence.exceptions import PersistenceError
 from domain.models.user import UserModel as DomainUserModel, UserStatus
 from domain.repositories.user import UserRepository
 from domain.services.authentication import AuthenticationChallenge, AuthenticationEngine, SignUpResult
@@ -33,11 +70,13 @@ class SettingsTests(unittest.TestCase):
             "AWS_DEFAULT_REGION": "us-west-2",
             "COGNITO_CLIENT_ID": "test-client",
             "COGNITO_CLIENT_SECRET": "private-client-secret",
+            "COGNITO_USER_POOL_ID": "us-east-1_testpool",
         }, clear=True):
             settings = Settings()
 
         self.assertEqual(settings.AWS_REGION, "us-east-1")
         self.assertEqual(settings.COGNITO_CLIENT_ID, "test-client")
+        self.assertEqual(settings.COGNITO_USER_POOL_ID, "us-east-1_testpool")
         self.assertEqual(settings.COGNITO_CLIENT_SECRET.get_secret_value(), "private-client-secret")
         self.assertNotIn("private-client-secret", repr(settings))
 
@@ -46,6 +85,7 @@ class SettingsTests(unittest.TestCase):
             "AWS_REGION": "", "AWS_DEFAULT_REGION": "us-west-2",
             "COGNITO_CLIENT_ID": "test-client",
             "COGNITO_CLIENT_SECRET": "test-secret",
+            "COGNITO_USER_POOL_ID": "us-east-1_testpool",
         }, clear=True):
             settings = Settings()
 
@@ -56,6 +96,7 @@ class SettingsTests(unittest.TestCase):
             "AWS_REGION": "us-east-1",
             "COGNITO_CLIENT_ID": "test-client",
             "COGNITO_CLIENT_SECRET": "test-secret",
+            "COGNITO_USER_POOL_ID": "us-east-1_testpool",
         }
         for field in environment:
             for value in (None, ""):
@@ -72,7 +113,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_settings_fields_are_uppercase(self) -> None:
         self.assertEqual(set(Settings.model_fields), {
-            "AWS_REGION", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET",
+            "AWS_REGION", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET", "COGNITO_USER_POOL_ID",
         })
         with patch.dict("os.environ", {
             "aws_region": "us-east-1",
@@ -105,8 +146,23 @@ class SignInUseCaseTests(unittest.TestCase):
 
         result = use_case.execute(email="user@example.com", password="test-password")
 
-        self.assertIs(result, engine.sign_up.return_value)
-        service.add.assert_called_once_with(email="user@example.com", external_id="user-id")
+        self.assertTrue(result.user_confirmed)
+        engine.auto_confirm_email.assert_called_once_with(username="user@example.com", account_confirmed=False)
+        service.add.assert_called_once_with(
+            email="user@example.com", external_id="user-id", status=UserStatus.EMAIL_CONFIRMED,
+        )
+
+    def test_sign_up_does_not_save_if_auto_confirmation_fails(self) -> None:
+        engine = Mock(spec=AuthenticationEngine)
+        engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
+        engine.auto_confirm_email.side_effect = AuthenticationError("service_error", "Automatic confirmation failed")
+        service = Mock(spec=UserService)
+        use_case = SignUpUseCase(authentication_engine=engine, user_service=service)
+
+        with self.assertRaises(AuthenticationError):
+            use_case.execute(email="user@example.com", password="test-password")
+
+        service.add.assert_not_called()
 
     def test_current_user_returns_domain_model_through_service(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
@@ -159,7 +215,8 @@ class SignInUseCaseTests(unittest.TestCase):
 
         result = use_case.execute(email="user@example.com", password="test-password")
 
-        self.assertIs(result, engine.sign_up.return_value)
+        self.assertEqual(result.user_id, "user-id")
+        self.assertTrue(result.user_confirmed)
         engine.sign_up.assert_called_once_with(
             username="user@example.com", email="user@example.com", password="test-password",
         )
@@ -168,7 +225,7 @@ class SignInUseCaseTests(unittest.TestCase):
         self.assertEqual(user.id, "user-id")
         self.assertEqual(user.email, "user@example.com")
         self.assertEqual(user.external_id, "user-id")
-        self.assertEqual(user.status, UserStatus.REGISTERED)
+        self.assertEqual(user.status, UserStatus.EMAIL_CONFIRMED)
         self.assertIsNotNone(user.created_at.tzinfo)
         self.assertFalse(hasattr(user, "password"))
 
@@ -182,15 +239,16 @@ class SignInUseCaseTests(unittest.TestCase):
             use_case.execute(email="user@example.com", password="test-password")
 
         repository.add.assert_not_called()
+        engine.auto_confirm_email.assert_not_called()
 
     def test_sign_up_use_case_propagates_persistence_failure(self) -> None:
         engine = Mock(spec=AuthenticationEngine)
         engine.sign_up.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
         repository = Mock(spec=UserRepository)
-        repository.add.side_effect = UserPersistenceError("Unable to save user")
+        repository.add.side_effect = PersistenceError("Unable to save user")
         use_case = SignUpUseCase(authentication_engine=engine, user_service=UserService(repository))
 
-        with self.assertRaises(UserPersistenceError):
+        with self.assertRaises(PersistenceError):
             use_case.execute(email="user@example.com", password="test-password")
 
     def test_use_case_delegates_to_domain_engine(self) -> None:
@@ -218,6 +276,16 @@ class SignInUseCaseTests(unittest.TestCase):
 
 
 class BffApiTests(unittest.TestCase):
+    def test_broker_activation_router_is_removed(self) -> None:
+        with TestClient(app) as client:
+            response = client.post("/brokers/pending-broker/activate")
+
+        self.assertEqual(response.status_code, 404)
+        paths = app.openapi()["paths"]
+        self.assertFalse(any(path.startswith("/brokers") for path in paths))
+        self.assertIn("/auth/sign-in", paths)
+        self.assertFalse(hasattr(app.state.container, "activate_broker_use_case"))
+
     def test_health(self) -> None:
         with TestClient(app) as client:
             response = client.get("/health")
@@ -236,6 +304,7 @@ class SignInTests(unittest.TestCase):
                 "AWS_REGION": "us-east-1",
                 "COGNITO_CLIENT_ID": "test-client",
                 "COGNITO_CLIENT_SECRET": "test-secret",
+                "COGNITO_USER_POOL_ID": "us-east-1_testpool",
             },
             clear=True,
         )
@@ -319,7 +388,7 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_current_user_database_error_is_sanitized(self) -> None:
-        self.user_repository.get_by_external_id.side_effect = UserPersistenceError("private database details")
+        self.user_repository.get_by_external_id.side_effect = PersistenceError("private database details")
 
         response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
 
@@ -381,7 +450,7 @@ class SignInTests(unittest.TestCase):
         self.user_repository.mark_email_confirmed.assert_called_once_with(email="user@example.com")
 
     def test_confirm_sign_up_reports_status_persistence_failure(self) -> None:
-        self.user_repository.mark_email_confirmed.side_effect = UserPersistenceError("private database details")
+        self.user_repository.mark_email_confirmed.side_effect = PersistenceError("private database details")
 
         response = self.client.post("/auth/sign-up/confirm", json={
             "email": "user@example.com", "code": "123456",
@@ -446,7 +515,7 @@ class SignInTests(unittest.TestCase):
         use_case.execute.assert_called_once_with(email="user@example.com", code="123456")
         self.client_factory.assert_not_called()
 
-    def test_sign_up_creates_user_and_returns_confirmation_details(self) -> None:
+    def test_sign_up_creates_user_and_auto_confirms_email(self) -> None:
         self.cognito.sign_up.return_value = {
             "UserSub": "user-id", "UserConfirmed": False,
             "CodeDeliveryDetails": {"Destination": "u***@example.com", "DeliveryMedium": "EMAIL"},
@@ -457,8 +526,8 @@ class SignInTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json(), {
-            "user_id": "user-id", "user_confirmed": False,
-            "confirmation_destination": "u***@example.com", "confirmation_delivery_medium": "EMAIL",
+            "user_id": "user-id", "user_confirmed": True,
+            # "confirmation_destination": None, "confirmation_delivery_medium": None,  # Removed for new implementation
         })
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         expected_hash = base64.b64encode(hmac.new(
@@ -468,16 +537,61 @@ class SignInTests(unittest.TestCase):
             ClientId="test-client", Username="user@example.com", Password="test-password",
             SecretHash=expected_hash, UserAttributes=[{"Name": "email", "Value": "user@example.com"}],
         )
+        self.cognito.admin_confirm_sign_up.assert_called_once_with(
+            UserPoolId="us-east-1_testpool", Username="user@example.com",
+        )
+        self.cognito.admin_update_user_attributes.assert_called_once_with(
+            UserPoolId="us-east-1_testpool", Username="user@example.com",
+            UserAttributes=[{"Name": "email_verified", "Value": "true"}],
+        )
+        self.assertEqual([call[0] for call in self.cognito.method_calls], [
+            "sign_up", "admin_confirm_sign_up", "admin_update_user_attributes",
+        ])
         self.assertNotIn("test-password", response.text)
         self.user_repository.add.assert_called_once()
         user = self.user_repository.add.call_args.args[0]
         self.assertEqual(user.id, "user-id")
         self.assertEqual(user.email, "user@example.com")
         self.assertEqual(user.external_id, "user-id")
+        self.assertEqual(user.status, UserStatus.EMAIL_CONFIRMED)
+
+    def test_sign_up_stops_if_admin_confirmation_fails(self) -> None:
+        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
+        self.cognito.admin_confirm_sign_up.side_effect = ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "private AWS details"}}, "AdminConfirmSignUp",
+        )
+
+        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("private AWS details", response.text)
+        self.cognito.admin_update_user_attributes.assert_not_called()
+        self.user_repository.add.assert_not_called()
+
+    def test_sign_up_stops_if_email_verification_update_fails(self) -> None:
+        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
+        self.cognito.admin_update_user_attributes.side_effect = ClientError(
+            {"Error": {"Code": "AccessDeniedException", "Message": "private AWS details"}}, "AdminUpdateUserAttributes",
+        )
+
+        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("private AWS details", response.text)
+        self.user_repository.add.assert_not_called()
+
+    def test_sign_up_stops_if_confirmation_service_is_unavailable(self) -> None:
+        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
+        self.cognito.admin_confirm_sign_up.side_effect = EndpointConnectionError(endpoint_url="https://cognito.example.com")
+
+        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+
+        self.assertEqual(response.status_code, 503)
+        self.user_repository.add.assert_not_called()
 
     def test_sign_up_reports_profile_persistence_failure(self) -> None:
         self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
-        self.user_repository.add.side_effect = UserPersistenceError("private database details")
+        self.user_repository.add.side_effect = PersistenceError("private database details")
 
         response = self.client.post("/auth/sign-up", json={
             "email": "user@example.com", "password": "test-password",
@@ -495,6 +609,11 @@ class SignInTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.json()["user_confirmed"])
         self.assertIsNone(response.json()["confirmation_destination"])
+        self.cognito.admin_confirm_sign_up.assert_not_called()
+        self.cognito.admin_update_user_attributes.assert_called_once_with(
+            UserPoolId="us-east-1_testpool", Username="user@example.com",
+            UserAttributes=[{"Name": "email_verified", "Value": "true"}],
+        )
 
     def test_sign_up_errors_are_sanitized(self) -> None:
         for code, expected_status in (
@@ -800,6 +919,7 @@ class SignInTests(unittest.TestCase):
             AWS_REGION="us-west-2",
             COGNITO_CLIENT_ID="override-client",
             COGNITO_CLIENT_SECRET="override-secret",
+            COGNITO_USER_POOL_ID="us-west-2_overridepool",
         )
         self.cognito.initiate_auth.return_value = {
             "ChallengeName": "SMS_MFA", "Session": "challenge-session",

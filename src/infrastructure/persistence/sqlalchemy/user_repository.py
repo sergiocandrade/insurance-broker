@@ -3,10 +3,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from domain.models.user import UserModel as DomainUserModel, UserStatus
-from domain.exceptions.persistence import UserPersistenceError
+from infrastructure.persistence.exceptions import PersistenceError
 from domain.repositories.user import UserRepository
-from infrastructure.persistence.models import UserModel
-from infrastructure.persistence.user_mapper import UserMapper
+from infrastructure.persistence.sqlalchemy.models.user_model import UserModel
+from infrastructure.persistence.sqlalchemy.user_mapper import UserMapper
 
 
 class SqlAlchemyUserRepository(UserRepository):
@@ -23,14 +23,14 @@ class SqlAlchemyUserRepository(UserRepository):
                     return None
                 return UserMapper.to_domain(record)
         except SQLAlchemyError as e:
-            raise UserPersistenceError(f"Unable to load user profile {external_id}: {e}") from None
+            raise PersistenceError(f"Unable to load user profile {external_id}: {e}") from None
 
     def add(self, user: DomainUserModel) -> None:
         try:
             with self.session_factory.begin() as session:
                 session.add(UserMapper.to_model(user))
         except SQLAlchemyError:
-            raise UserPersistenceError("Unable to save user profile") from None
+            raise PersistenceError("Unable to save user profile") from None
 
     def mark_email_confirmed(self, email: str) -> None:
         try:
@@ -43,6 +43,6 @@ class SqlAlchemyUserRepository(UserRepository):
                 if result.rowcount == 0:
                     user_id = session.scalar(select(UserModel.id).where(UserModel.email == email))
                     if user_id is None:
-                        raise UserPersistenceError("User profile not found")
+                        raise PersistenceError("User profile not found")
         except SQLAlchemyError:
-            raise UserPersistenceError("Unable to update user registration status") from None
+            raise PersistenceError("Unable to update user registration status") from None

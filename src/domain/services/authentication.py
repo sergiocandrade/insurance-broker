@@ -25,8 +25,8 @@ AuthenticationResult = AuthenticationTokens | AuthenticationChallenge
 class SignUpResult:
     user_id: str
     user_confirmed: bool
-    confirmation_destination: str | None = None
-    confirmation_delivery_medium: str | None = None
+    confirmation_destination: str | None = None  # Retained for backward compatibility
+    confirmation_delivery_medium: str | None = None  # Retained for backward compatibility
 
 
 class AuthenticationEngine(ABC):
@@ -36,6 +36,10 @@ class AuthenticationEngine(ABC):
 
     @abstractmethod
     def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:
         raise NotImplementedError
 
     @abstractmethod

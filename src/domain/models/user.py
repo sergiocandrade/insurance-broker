@@ -4,15 +4,15 @@ from enum import StrEnum
 
 
 class UserStatus(StrEnum):
+    PENDING = "PENDING"
     REGISTERED = "REGISTERED"
-    EMAIL_CONFIRMED = "EMAIL_CONFIRMED"
-    COMPLETED = "COMPLETED"
 
 
-@dataclass(frozen=True)
+@dataclass()
 class UserModel:
     id: str
     email: str
-    external_id: str
+    external_id: str | None
     status: UserStatus
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    activated_at: datetime | None = None

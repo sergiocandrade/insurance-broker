@@ -45,6 +45,7 @@ services:
     environment:
       AWS_REGION: '${AWS_REGION:-us-east-1}'
       DATABASE_URL: '${DATABASE_URL:-mysql+pymysql://app_user:app_password@host.docker.internal:3310/insurance-broker?charset=utf8mb4}'
+      COGNITO_USER_POOL_ID: 'us-east-1_tzVtSqAhU'
       COGNITO_CLIENT_ID: '782jk9k3ln1f4n82n2me9boqt5'
       COGNITO_CLIENT_SECRET: '1b84uv7g8vk7kfj1l4u1cnilo8udbkvr9urett2asvsa3mol04sk'
       

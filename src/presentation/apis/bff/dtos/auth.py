@@ -10,7 +10,7 @@ class CurrentUserResponse(BaseModel):
 
     id: str
     email: str
-    external_id: str
+    external_id: str | None
     status: UserStatus
     created_at: datetime
 
@@ -28,8 +28,8 @@ class SignUpRequest(BaseModel):
 class SignUpResponse(BaseModel):
     user_id: str
     user_confirmed: bool
-    confirmation_destination: str | None = None
-    confirmation_delivery_medium: str | None = None
+    # confirmation_destination: str | None = None  # Removed for new implementation
+    # confirmation_delivery_medium: str | None = None  # Removed for new implementation
 
 
 class ConfirmSignUpRequest(BaseModel):

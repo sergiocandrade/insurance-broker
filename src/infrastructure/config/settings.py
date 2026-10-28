@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     COGNITO_CLIENT_ID: str = Field(min_length=1)
     COGNITO_CLIENT_SECRET: SecretStr = Field(min_length=1)
+    COGNITO_USER_POOL_ID: str = Field(min_length=1)
 
 
 class DatabaseSettings(BaseSettings):

@@ -11,8 +11,7 @@ db_url = cmd_url or config_url
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from infrastructure.persistence.database import Base
-from infrastructure.persistence.models import *
+from infrastructure.persistence.sqlalchemy.models import Base
 
 target_metadata = Base.metadata
 
