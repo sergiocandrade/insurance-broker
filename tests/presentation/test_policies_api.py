@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from application.use_cases.list_policies import ListPoliciesUseCase
 from domain.exceptions.broker import BrokerNotFoundException
+from domain.models.customer import CustomerModel, CustomerType
 from domain.models.insurance_branch import InsuranceBranchModel
 from domain.models.insurance_category import InsuranceCategoryModel
 from domain.models.insurance_product import InsuranceProductModel
@@ -28,6 +29,11 @@ class PoliciesApiTests(unittest.TestCase):
                 insurance_product_id="product-id", insurer_id="insurer-id", policy_number="POL-001",
                 start_date=date(2026, 1, 1), end_date=date(2027, 1, 1),
                 status="ACTIVE", created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                customer=CustomerModel(
+                    id="customer-id", name="Customer Example", customer_type=CustomerType.PERSON,
+                    phone="+5511999999999", email="customer@example.com", broker_id="broker-id",
+                    created_at=datetime(2026, 10, 28, tzinfo=UTC),
+                ),
                 insurer=InsurerModel(
                     id="insurer-id", name="Example Insurer", created_at=datetime(2026, 10, 28, tzinfo=UTC),
                 ),
@@ -48,7 +54,7 @@ class PoliciesApiTests(unittest.TestCase):
         )
         with app.state.container.list_policies_use_case.override(use_case):
             response = self.client.get(
-                "/policies?broker_id=broker-id&customer_id=customer-id&page=2&page_size=5",
+                "/policies?broker_id=broker-id&customer_id=customer-id&end_date_from=2027-01-01&end_date_to=2027-12-31&page=2&page_size=5",
                 headers={"Authorization": "Bearer token"},
             )
 
@@ -57,6 +63,9 @@ class PoliciesApiTests(unittest.TestCase):
         self.assertEqual(response.json()["page"], 2)
         self.assertEqual(response.json()["page_size"], 5)
         self.assertEqual(response.json()["items"][0]["policy_number"], "POL-001")
+        self.assertEqual(response.json()["items"][0]["customer"]["id"], "customer-id")
+        self.assertEqual(response.json()["items"][0]["customer"]["name"], "Customer Example")
+        self.assertEqual(response.json()["items"][0]["customer"]["email"], "customer@example.com")
         self.assertEqual(response.json()["items"][0]["insurer"]["id"], "insurer-id")
         self.assertEqual(response.json()["items"][0]["insurer"]["name"], "Example Insurer")
         self.assertEqual(response.json()["items"][0]["insurance_product"]["id"], "product-id")
@@ -77,6 +86,7 @@ class PoliciesApiTests(unittest.TestCase):
         use_case.execute.assert_called_once_with(
             access_token="token", page=2, page_size=5,
             customer_id="customer-id", broker_id="broker-id",
+            end_date_from=date(2027, 1, 1), end_date_to=date(2027, 12, 31),
         )
 
     def test_requires_authentication_and_valid_pagination(self) -> None:

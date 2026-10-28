@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 import unittest
 from unittest.mock import Mock
@@ -80,4 +80,23 @@ class ListPoliciesUseCaseTests(unittest.TestCase):
 
         self.policy_service.list_for_brokers.assert_called_once_with(
             broker_ids=["broker-a", "broker-b"], customer_id=None, offset=0, limit=20,
+            end_date_from=None, end_date_to=None,
+        )
+
+    def test_filters_by_end_date_range(self) -> None:
+        self.use_case.execute(
+            access_token="token",
+            page=1,
+            page_size=20,
+            end_date_from=date(2027, 1, 1),
+            end_date_to=date(2027, 12, 31),
+        )
+
+        self.policy_service.list_for_brokers.assert_called_once_with(
+            broker_ids=["broker-a", "broker-b"],
+            customer_id=None,
+            offset=0,
+            limit=20,
+            end_date_from=date(2027, 1, 1),
+            end_date_to=date(2027, 12, 31),
         )

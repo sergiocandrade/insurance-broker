@@ -3,6 +3,20 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
+from domain.models.customer import CustomerType
+
+
+class PolicyCustomerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    customer_type: CustomerType
+    phone: str
+    email: str
+    broker_id: str
+    created_at: datetime
+
 
 class InsuranceCategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -44,6 +58,7 @@ class PolicyResponse(BaseModel):
 
     id: str
     customer_id: str
+    customer: PolicyCustomerResponse
     amount: Decimal
     insurance_product: InsuranceProductResponse
     policy_number: str

@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import date
 
 from dependency_injector.wiring import Provider, inject
 from fastapi import APIRouter, Depends, Query, Response
@@ -27,6 +28,8 @@ def list_policies(
     response: Response,
     customer_id: str | None = None,
     broker_id: str | None = None,
+    end_date_from: date | None = None,
+    end_date_to: date | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     access_token: str = Depends(get_access_token),
@@ -38,6 +41,8 @@ def list_policies(
         page_size=page_size,
         customer_id=customer_id,
         broker_id=broker_id,
+        end_date_from=end_date_from,
+        end_date_to=end_date_to,
     )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"

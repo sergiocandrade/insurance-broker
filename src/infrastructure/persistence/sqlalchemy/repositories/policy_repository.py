@@ -1,9 +1,10 @@
-from datetime import UTC
+from datetime import UTC, date
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from domain.models.customer import CustomerModel as DomainCustomerModel
 from domain.models.policy import PolicyModel as DomainPolicyModel
 from domain.models.insurance_product import InsuranceProductModel as DomainInsuranceProductModel
 from domain.models.insurance_branch import InsuranceBranchModel as DomainInsuranceBranchModel
@@ -31,6 +32,8 @@ class SqlAlchemyPolicyRepository:
         offset: int,
         limit: int | None,
         customer_ids: list[str] | None = None,
+        end_date_from: date | None = None,
+        end_date_to: date | None = None,
     ) -> tuple[list[DomainPolicyModel], int]:
         try:
             with self.session_factory() as session:
@@ -39,10 +42,14 @@ class SqlAlchemyPolicyRepository:
                     conditions.append(PolicyModel.customer_id == customer_id)
                 if customer_ids is not None:
                     conditions.append(PolicyModel.customer_id.in_(customer_ids))
+                if end_date_from is not None:
+                    conditions.append(PolicyModel.end_date >= end_date_from)
+                if end_date_to is not None:
+                    conditions.append(PolicyModel.end_date <= end_date_to)
 
                 query = select(
                     PolicyModel, InsuranceProductModel, InsuranceBranchModel, InsuranceCategoryModel,
-                    SqlInsurerModel,
+                    SqlInsurerModel, CustomerModel,
                 ).join(
                     CustomerModel,
                     CustomerModel.id == PolicyModel.customer_id,
@@ -125,8 +132,21 @@ class SqlAlchemyPolicyRepository:
                             if insurer is not None
                             else None
                         ),
+                            customer=DomainCustomerModel(
+                                id=customer.id,
+                                name=customer.name,
+                                customer_type=customer.customer_type,
+                                phone=customer.phone,
+                                email=customer.email,
+                                broker_id=customer.broker_id,
+                                created_at=(
+                                    customer.created_at.replace(tzinfo=UTC)
+                                    if customer.created_at.tzinfo is None
+                                    else customer.created_at.astimezone(UTC)
+                                ),
+                            ),
                     )
-                    for policy, product, branch, category, insurer in records
+                        for policy, product, branch, category, insurer, customer in records
                 ]
                 return policies, total
         except SQLAlchemyError:

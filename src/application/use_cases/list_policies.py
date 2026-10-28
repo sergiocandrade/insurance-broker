@@ -1,3 +1,5 @@
+from datetime import date
+
 from domain.exceptions.broker import BrokerNotFoundException
 from domain.exceptions.customer import CustomerNotFoundException
 from domain.models.policy import PolicyModel
@@ -30,6 +32,8 @@ class ListPoliciesUseCase:
         page_size: int,
         customer_id: str | None = None,
         broker_id: str | None = None,
+        end_date_from: date | None = None,
+        end_date_to: date | None = None,
     ) -> tuple[list[PolicyModel], int]:
         external_id = self.authentication_engine.get_authenticated_user_id(access_token=access_token)
         user = self.user_service.get_info(external_id=external_id)
@@ -58,4 +62,6 @@ class ListPoliciesUseCase:
             customer_id=customer_id,
             offset=(page - 1) * page_size,
             limit=page_size,
+            end_date_from=end_date_from,
+            end_date_to=end_date_to,
         )

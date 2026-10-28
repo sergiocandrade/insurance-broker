@@ -1,3 +1,5 @@
+from datetime import date
+
 from domain.models.policy import PolicyModel
 from domain.repositories.policy import PolicyRepository
 
@@ -13,6 +15,8 @@ class PolicyService:
         offset: int,
         limit: int | None,
         customer_ids: list[str] | None = None,
+        end_date_from: date | None = None,
+        end_date_to: date | None = None,
     ) -> tuple[list[PolicyModel], int]:
         return self.policy_repository.list_for_brokers(
             broker_ids=broker_ids,
@@ -20,6 +24,8 @@ class PolicyService:
             offset=offset,
             limit=limit,
             customer_ids=customer_ids,
+            end_date_from=end_date_from,
+            end_date_to=end_date_to,
         )
 
     def list_for_customers(

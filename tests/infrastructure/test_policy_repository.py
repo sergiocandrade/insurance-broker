@@ -64,7 +64,8 @@ class PolicyRepositoryTests(unittest.TestCase):
                 PolicyModel(
                     id=f"policy-{number}", customer_id=customer_id, amount=Decimal("100.00"),
                     insurance_product_id="product-id", insurer_id="insurer-id", policy_number=f"POL-{number:03}",
-                    start_date=date(2026, 1, 1), end_date=date(2027, 1, 1),
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2028, 1, 1) if number == 4 else date(2027, 1, 1),
                 )
                 for number, customer_id in ((1, "customer-a1"), (2, "customer-a1"),
                                             (3, "customer-a2"), (4, "customer-b1"))
@@ -86,6 +87,9 @@ class PolicyRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(policies[0].insurer.id, "insurer-id")
         self.assertEqual(policies[0].insurer.name, "Insurer")
+        self.assertEqual(policies[0].customer.id, "customer-a1")
+        self.assertEqual(policies[0].customer.name, "Customer A1")
+        self.assertEqual(policies[0].customer.email, "a1@example.com")
 
     def test_lists_across_accessible_brokers(self) -> None:
         policies, total = self.repository.list_for_brokers(
@@ -117,3 +121,16 @@ class PolicyRepositoryTests(unittest.TestCase):
             {policy.customer_id for policy in policies},
             {"customer-a2", "customer-b1"},
         )
+
+    def test_filters_by_end_date_range(self) -> None:
+        policies, total = self.repository.list_for_brokers(
+            broker_ids=["broker-a", "broker-b"],
+            customer_id=None,
+            offset=0,
+            limit=None,
+            end_date_from=date(2027, 1, 1),
+            end_date_to=date(2027, 12, 31),
+        )
+
+        self.assertEqual(total, 3)
+        self.assertTrue(all(policy.end_date == date(2027, 1, 1) for policy in policies))

@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from dataclasses import field
 
+from domain.models.customer import CustomerModel as DomainCustomerModel
 from domain.models.insurance_product import InsuranceProductModel
 from domain.models.insurer import InsurerModel
 
@@ -22,3 +23,4 @@ class PolicyModel:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     insurance_product: InsuranceProductModel | None = None
     insurer: InsurerModel | None = None
+    customer: DomainCustomerModel | None = None
