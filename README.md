@@ -72,24 +72,9 @@ curl -X POST http://localhost:5002/auth/sign-up \
 	-d '{"email":"user@example.com","password":"Example-Password123!"}'
 ```
 
-Returns `201` with `user_id` and `user_confirmed`. It does not
-return authentication tokens. When `user_confirmed` is false, complete Cognito's
-signup-confirmation flow with `POST /auth/sign-up/confirm` before signing in.
-
-Configure the user pool to verify email during signup. Submit the code sent by
-Cognito along with the same email address used to register. No access token is
-required:
-
-```sh
-curl -X POST http://localhost:5002/auth/sign-up/confirm \
-	-H 'Content-Type: application/json' \
-	-d '{"email":"user@example.com","code":"123456"}'
-```
-
-Successful confirmation returns `200`; sign in separately with the email and
-password. Invalid or expired codes return `400`; email alias conflicts return
-`409`; throttling returns `429`. Confirmation never forcibly transfers an email
-alias from another account. Do not log confirmation codes.
+Returns `201` with `user_id` and `user_confirmed`. Email is automatically
+confirmed during signup. The response does not contain authentication tokens;
+sign in separately with the registered email and password.
 
 Existing usernames return `409`; password-policy failures and invalid signup
 details return `400`; disabled sign-up returns `403`; throttling returns `429`.

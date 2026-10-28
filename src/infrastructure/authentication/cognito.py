@@ -98,8 +98,6 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
         return SignUpResult(
             user_id=result["User"]["Username"],
             user_confirmed=True,
-            confirmation_destination=None,  # Removed for new implementation
-            confirmation_delivery_medium=None,  # Removed for new implementation
         )
 
     def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:
@@ -115,35 +113,6 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             raise AuthenticationError(
                 "service_unavailable", "User was created, but the email confirmation service is unavailable",
             ) from None
-
-    def confirm_sign_up(self, username: str, code: str) -> None:
-        try:
-            client = boto3.client("cognito-idp", region_name=self.region)
-            client.confirm_sign_up(
-                ClientId=self.client_id,
-                Username=username,
-                ConfirmationCode=code,
-                SecretHash=self._secret_hash(username),
-                ForceAliasCreation=False,
-            )
-        except ClientError as error:
-            error_code = error.response.get("Error", {}).get("Code")
-            if error_code in {
-                "CodeMismatchException", "ExpiredCodeException", "UserNotFoundException",
-                "NotAuthorizedException", "InvalidParameterException",
-            }:
-                raise AuthenticationError(
-                    "invalid_signup_confirmation", "Invalid or expired sign-up confirmation code",
-                ) from None
-            if error_code == "AliasExistsException":
-                raise AuthenticationError("email_conflict", "Email address cannot be confirmed") from None
-            if error_code == "ForbiddenException":
-                raise AuthenticationError("signup_not_allowed", "Sign-up confirmation is not permitted") from None
-            if error_code in {"TooManyRequestsException", "LimitExceededException", "TooManyFailedAttemptsException"}:
-                raise AuthenticationError("throttled", "Too many sign-up confirmation attempts") from None
-            raise AuthenticationError("service_error", "Authentication service error") from None
-        except BotoCoreError:
-            raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
 
     def sign_in(self, username: str, password: str) -> AuthenticationResult:
         auth_parameters = {

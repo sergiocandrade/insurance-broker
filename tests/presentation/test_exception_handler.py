@@ -121,7 +121,6 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
         for method, path, provider_name, body in (
             ("POST", "/auth/sign-in", "sign_in_use_case", self.credentials),
             ("POST", "/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}),
-            ("POST", "/auth/sign-up/confirm", "confirm_sign_up_use_case", {"email": "user@example.com", "code": "123456"}),
             ("POST", "/auth/new-password", "complete_new_password_use_case", {
                 "username": "test-user", "new_password": "new-password", "session": "test-session",
             }),
@@ -144,7 +143,6 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
     def test_persistence_errors_keep_safe_partial_registration_context(self) -> None:
         for path, provider_name, body, expected_detail in (
             ("/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}, "Registration succeeded in Cognito"),
-            ("/auth/sign-up/confirm", "confirm_sign_up_use_case", {"email": "user@example.com", "code": "123456"}, "Email confirmed in Cognito"),
         ):
             with self.subTest(path=path):
                 use_case = Mock()

@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
-from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
@@ -15,8 +14,6 @@ from presentation.apis.bff.containers import Container
 from domain.services.authentication import AuthenticationResult, AuthenticationTokens
 from presentation.apis.bff.dtos.auth import (
     ConfirmPasswordResetRequest,
-    ConfirmSignUpRequest,
-    ConfirmSignUpResponse,
     CurrentUserResponse,
     NewPasswordRequest,
     PasswordResetRequest,
@@ -73,13 +70,6 @@ def get_sign_in_use_case(
 def get_sign_up_use_case(
     use_case_provider: Callable[[], SignUpUseCase] = Depends(Provider[Container.sign_up_use_case]),
 ) -> SignUpUseCase:
-    return use_case_provider()
-
-
-@inject
-def get_confirm_sign_up_use_case(
-    use_case_provider: Callable[[], ConfirmSignUpUseCase] = Depends(Provider[Container.confirm_sign_up_use_case]),
-) -> ConfirmSignUpUseCase:
     return use_case_provider()
 
 
@@ -150,21 +140,7 @@ def sign_up(
     return SignUpResponse(
         user_id=result.user_id,
         user_confirmed=result.user_confirmed,
-        # confirmation_destination=result.confirmation_destination,  # Removed for new implementation
-        # confirmation_delivery_medium=result.confirmation_delivery_medium,  # Removed for new implementation
     )
-
-
-@router.post("/sign-up/confirm", response_model=ConfirmSignUpResponse)
-def confirm_sign_up(
-    credentials: ConfirmSignUpRequest,
-    response: Response,
-    use_case: ConfirmSignUpUseCase = Depends(get_confirm_sign_up_use_case),
-) -> ConfirmSignUpResponse:
-    use_case.execute(email=str(credentials.email), code=credentials.code.get_secret_value())
-
-    response.headers["Cache-Control"] = "no-store"
-    return ConfirmSignUpResponse(message="Sign-up confirmed successfully. You can now sign in.")
 
 
 @router.post("/sign-in", response_model=SignInTokens | SignInChallenge)

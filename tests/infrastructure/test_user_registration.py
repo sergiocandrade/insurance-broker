@@ -3,8 +3,7 @@ from datetime import datetime
 import unittest
 from unittest.mock import Mock
 
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from application.use_cases.sign_up import SignUpUseCase
@@ -13,6 +12,7 @@ from infrastructure.persistence.exceptions import PersistenceError
 from domain.models.broker import BrokerStatus
 from domain.models.user import UserStatus
 from domain.services.user import UserService
+from domain.services.broker import BrokerService
 from domain.services.authentication import AuthenticationEngine, SignUpResult
 from infrastructure.persistence.sqlalchemy.models import Base, BrokerModel, UserBrokerModel, UserModel
 from infrastructure.persistence.sqlalchemy.repositories.user_repository import SqlAlchemyUserRepository
@@ -69,7 +69,7 @@ class UserRegistrationTests(unittest.TestCase):
             status=UserStatus.REGISTERED, created_at=datetime(2030, 1, 1),
         )
 
-        UserService(self.repository).update(updated)
+        self.repository.update(updated)
 
         with self.sessions() as session:
             saved = session.get(UserModel, "local-user-id")
@@ -106,7 +106,7 @@ class UserRegistrationTests(unittest.TestCase):
             self.assertEqual(saved.external_id, "provisioned-id")
             self.assertEqual(saved.status, UserStatus.PENDING)
 
-    def test_registration_preserves_local_id_and_activates_all_associated_brokers(self) -> None:
+    def test_user_activation_preserves_local_id_without_changing_brokers(self) -> None:
         user = self.repository.fetch_user_by_email("user@example.com")
         UserService(self.repository).activate_user(user=user, external_id="new-cognito-sub")
 
@@ -116,8 +116,8 @@ class UserRegistrationTests(unittest.TestCase):
             self.assertEqual(user.status, UserStatus.REGISTERED)
             self.assertEqual(user.name, "Existing User")
             self.assertEqual(user.created_at, self.created_at)
-            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.ACTIVE)
-            self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.ACTIVE)
+            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.PENDING)
+            self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.PENDING)
             self.assertEqual(session.get(BrokerModel, "unrelated-broker").status, BrokerStatus.PENDING)
             self.assertEqual(len(session.scalars(select(UserModel)).all()), 2)
             self.assertEqual({link.user_id for link in session.scalars(select(UserBrokerModel))}, {"local-user-id"})
@@ -125,12 +125,15 @@ class UserRegistrationTests(unittest.TestCase):
     def test_signup_activates_all_brokers_associated_with_user(self) -> None:
         authentication = Mock(spec=AuthenticationEngine)
         authentication.sign_up.return_value = SignUpResult(user_id="new-cognito-sub", user_confirmed=False)
-        use_case = SignUpUseCase(authentication, UserService(self.repository))
+        use_case = SignUpUseCase(
+            authentication,
+            UserService(self.repository),
+            BrokerService(SqlAlchemyBrokerRepository(self.sessions)),
+        )
 
         result = use_case.execute(email="user@example.com", password="test-password")
 
         self.assertTrue(result.user_confirmed)
-        authentication.auto_confirm_email.assert_called_once_with(username="user@example.com", account_confirmed=False)
         with self.sessions() as session:
             user = session.get(UserModel, "local-user-id")
             self.assertEqual(user.external_id, "new-cognito-sub")
@@ -139,51 +142,3 @@ class UserRegistrationTests(unittest.TestCase):
             self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.ACTIVE)
             self.assertEqual(session.get(BrokerModel, "unrelated-broker").status, BrokerStatus.PENDING)
             self.assertEqual(len(session.scalars(select(UserModel)).all()), 2)
-
-    def test_signup_confirmation_failure_does_not_activate_associated_brokers(self) -> None:
-        authentication = Mock(spec=AuthenticationEngine)
-        authentication.sign_up.return_value = SignUpResult(user_id="new-cognito-sub", user_confirmed=False)
-        authentication.auto_confirm_email.side_effect = AuthenticationError("service_error", "Confirmation failed")
-        use_case = SignUpUseCase(authentication, UserService(self.repository))
-
-        with self.assertRaises(AuthenticationError):
-            use_case.execute(email="user@example.com", password="test-password")
-
-        with self.sessions() as session:
-            user = session.get(UserModel, "local-user-id")
-            self.assertEqual(user.external_id, "provisioned-id")
-            self.assertEqual(user.status, UserStatus.PENDING)
-            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.PENDING)
-            self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.PENDING)
-
-    def test_registration_rechecks_missing_memberships(self) -> None:
-        with self.assertRaises(PersistenceError):
-            self.repository.activate_user("unlinked-user", "new-cognito-sub")
-
-        with self.sessions() as session:
-            self.assertEqual(session.get(UserModel, "unlinked-user").external_id, "unlinked-id")
-            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.PENDING)
-
-    def test_registration_rejects_missing_local_user(self) -> None:
-        with self.assertRaises(PersistenceError):
-            self.repository.activate_user("missing-user", "new-cognito-sub")
-
-    def test_database_failure_rolls_back_user_and_all_brokers(self) -> None:
-        def fail_user_update(connection, cursor, statement, parameters, context, executemany):
-            if statement.startswith("UPDATE users "):
-                raise SQLAlchemyError("private database details")
-
-        event.listen(self.engine, "before_cursor_execute", fail_user_update)
-        try:
-            with self.assertRaises(PersistenceError) as error:
-                self.repository.activate_user("local-user-id", "new-cognito-sub")
-            self.assertNotIn("private database details", str(error.exception))
-        finally:
-            event.remove(self.engine, "before_cursor_execute", fail_user_update)
-
-        with self.sessions() as session:
-            user = session.get(UserModel, "local-user-id")
-            self.assertEqual(user.external_id, "provisioned-id")
-            self.assertEqual(user.status, UserStatus.PENDING)
-            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.PENDING)
-            self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.PENDING)

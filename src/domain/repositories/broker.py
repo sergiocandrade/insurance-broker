@@ -9,9 +9,5 @@ class BrokerRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, broker: BrokerModel) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
     def activate(self, broker_id: str, user_id: str) -> BrokerModel:
         raise NotImplementedError

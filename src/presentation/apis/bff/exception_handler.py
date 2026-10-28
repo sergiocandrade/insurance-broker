@@ -23,12 +23,10 @@ AUTHENTICATION_STATUS_CODES = {
     "registration_not_pending": 403,
     "invalid_password": 400,
     "invalid_signup_details": 400,
-    "invalid_signup_confirmation": 400,
     "user_exists": 409,
     "signup_not_allowed": 403,
     "invalid_challenge": 400,
     "invalid_reset_code": 400,
-    "email_conflict": 409,
     "throttled": 429,
     "service_error": 502,
     "service_unavailable": 503,
@@ -38,7 +36,6 @@ AUTHENTICATION_STATUS_CODES = {
 PERSISTENCE_ERROR_DETAILS = {
     "get_current_user": "User profile service unavailable",
     "sign_up": "Registration succeeded in Cognito, but the user profile could not be saved. Contact support before retrying.",
-    "confirm_sign_up": "Email confirmed in Cognito, but registration status could not be saved. Contact support before retrying.",
 }
 
 

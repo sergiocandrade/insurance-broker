@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
 
 from domain.models.user import UserModel
 
@@ -15,15 +14,6 @@ class UserRepository(ABC):
 
     @abstractmethod
     def update(self, user: UserModel) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def activate_user(
-        self,
-        user_id: str,
-        external_id: str,
-        activated_at: datetime | None = None,
-    ) -> None:
         raise NotImplementedError
 
    

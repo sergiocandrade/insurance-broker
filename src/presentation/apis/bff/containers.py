@@ -2,7 +2,6 @@ from dependency_injector import containers, providers
 from sqlalchemy.orm import sessionmaker
 
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
-from application.use_cases.confirm_sign_up import ConfirmSignUpUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
@@ -86,12 +85,6 @@ class Container(containers.DeclarativeContainer):
         authentication_engine=authentication_engine,
         user_service=user_service,
         broker_service=broker_service,
-    )
-
-    confirm_sign_up_use_case = providers.Factory(
-        ConfirmSignUpUseCase,
-        authentication_engine=authentication_engine,
-        user_service=user_service,
     )
 
     complete_new_password_use_case = providers.Factory(

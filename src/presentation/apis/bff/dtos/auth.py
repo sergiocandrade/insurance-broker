@@ -28,17 +28,6 @@ class SignUpRequest(BaseModel):
 class SignUpResponse(BaseModel):
     user_id: str
     user_confirmed: bool
-    # confirmation_destination: str | None = None  # Removed for new implementation
-    # confirmation_delivery_medium: str | None = None  # Removed for new implementation
-
-
-class ConfirmSignUpRequest(BaseModel):
-    email: EmailStr = Field(max_length=128)
-    code: SecretStr = Field(min_length=1, max_length=2048)
-
-
-class ConfirmSignUpResponse(BaseModel):
-    message: str
 
 
 class NewPasswordRequest(BaseModel):

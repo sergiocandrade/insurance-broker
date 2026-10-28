@@ -11,8 +11,7 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.schema import CreateTable
 
-from domain.exceptions.broker import BrokerNotFoundError
-from domain.models.broker import BrokerModel as DomainBrokerModel, BrokerStatus
+from domain.models.broker import BrokerStatus
 from infrastructure.persistence.sqlalchemy.repositories.broker_repository import SqlAlchemyBrokerRepository
 from infrastructure.persistence.sqlalchemy.models import Base, BrokerModel, UserBrokerModel, UserModel
 
@@ -25,22 +24,6 @@ class BrokerStatusTests(unittest.TestCase):
         self.sessions = sessionmaker(bind=self.engine, expire_on_commit=False)
         self.created_at = datetime(2026, 10, 27)
         self.repository = SqlAlchemyBrokerRepository(self.sessions)
-
-    def test_update_persists_domain_status_without_changing_creation_time(self) -> None:
-        with self.sessions.begin() as session:
-            session.add(BrokerModel(id="broker-id", created_at=self.created_at))
-
-        activated_at = datetime(2026, 10, 28)
-        self.repository.update(DomainBrokerModel(
-            id="broker-id", status=BrokerStatus.ACTIVE, created_at=datetime(2030, 1, 1),
-            activated_at=activated_at,
-        ))
-
-        with self.sessions() as session:
-            broker = session.get(BrokerModel, "broker-id")
-            self.assertEqual(broker.status, BrokerStatus.ACTIVE)
-            self.assertEqual(broker.created_at, self.created_at)
-            self.assertEqual(broker.activated_at, activated_at)
 
     def test_broker_activation_sets_activated_at(self) -> None:
         with self.sessions.begin() as session:
@@ -57,12 +40,6 @@ class BrokerStatusTests(unittest.TestCase):
             self.assertEqual(saved.status, BrokerStatus.ACTIVE)
             self.assertIsNotNone(saved.activated_at)
             self.assertEqual(activated.activated_at.replace(tzinfo=None), saved.activated_at)
-
-    def test_update_rejects_missing_broker(self) -> None:
-        with self.assertRaises(BrokerNotFoundError):
-            self.repository.update(DomainBrokerModel(
-                id="missing-broker", status=BrokerStatus.ACTIVE, created_at=self.created_at,
-            ))
 
     def test_new_brokers_default_to_pending(self) -> None:
         with self.sessions.begin() as session:
