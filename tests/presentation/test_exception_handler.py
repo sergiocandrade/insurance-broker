@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from application.usecase_exception import UseCaseException
 from domain.exceptions.authentication import AuthenticationError
+from domain.exceptions.broker import BrokerNotFoundException
+from domain.exceptions.customer import CustomerNotFoundException
 from domain.exceptions.domain import DomainException, ForbiddenException, NotFoundException
 from infrastructure.persistence.exceptions import PersistenceError
 from domain.exceptions.user import UserNotFoundException
@@ -19,7 +21,9 @@ class ExceptionHandlerTests(unittest.TestCase):
             (DomainException("Invalid operation"), 400),
             (UseCaseException("Signup is not allowed"), 400),
             (NotFoundException("Broker"), 404),
+            (CustomerNotFoundException(), 404),
             (UserNotFoundException(), 404),
+            (BrokerNotFoundException(), 403),
             (ForbiddenException("Access denied"), 403),
         ):
             with self.subTest(error=type(error).__name__):
