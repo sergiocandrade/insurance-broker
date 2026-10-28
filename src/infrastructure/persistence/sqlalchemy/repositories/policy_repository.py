@@ -29,13 +29,16 @@ class SqlAlchemyPolicyRepository:
         broker_ids: list[str],
         customer_id: str | None,
         offset: int,
-        limit: int,
+        limit: int | None,
+        customer_ids: list[str] | None = None,
     ) -> tuple[list[DomainPolicyModel], int]:
         try:
             with self.session_factory() as session:
                 conditions = [CustomerModel.broker_id.in_(broker_ids)]
                 if customer_id is not None:
                     conditions.append(PolicyModel.customer_id == customer_id)
+                if customer_ids is not None:
+                    conditions.append(PolicyModel.customer_id.in_(customer_ids))
 
                 query = select(
                     PolicyModel, InsuranceProductModel, InsuranceBranchModel, InsuranceCategoryModel,
@@ -59,11 +62,10 @@ class SqlAlchemyPolicyRepository:
                 total = session.scalar(
                     select(func.count()).select_from(query.subquery()),
                 ) or 0
-                records = session.execute(
-                    query.order_by(PolicyModel.policy_number, PolicyModel.id)
-                    .offset(offset)
-                    .limit(limit),
-                ).all()
+                query = query.order_by(PolicyModel.policy_number, PolicyModel.id).offset(offset)
+                if limit is not None:
+                    query = query.limit(limit)
+                records = session.execute(query).all()
                 policies = [
                     DomainPolicyModel(
                         id=policy.id,

@@ -10,6 +10,7 @@ from domain.models.user import UserModel, UserStatus
 from domain.services.authentication import AuthenticationEngine
 from domain.services.broker import BrokerService
 from domain.services.customer import CustomerService
+from domain.services.policy import PolicyService
 from domain.services.user import UserService
 
 
@@ -29,13 +30,16 @@ class ListBrokerCustomersUseCaseTests(unittest.TestCase):
             )],
             1,
         )
+        self.policy_service = Mock(spec=PolicyService)
+        self.policy_service.list_for_customers.return_value = []
         self.user_service = Mock(spec=UserService)
         self.user_service.get_info.return_value = UserModel(
             id="local-user-id", email="user@example.com", external_id="external-user-id",
             status=UserStatus.REGISTERED,
         )
         self.use_case = ListBrokerCustomersUseCase(
-            self.authentication, self.broker_service, self.customer_service, self.user_service,
+            self.authentication, self.broker_service, self.customer_service,
+            self.policy_service, self.user_service,
         )
 
     def test_lists_page_for_authenticated_broker_member(self) -> None:

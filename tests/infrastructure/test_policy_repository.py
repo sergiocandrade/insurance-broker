@@ -102,3 +102,18 @@ class PolicyRepositoryTests(unittest.TestCase):
 
         self.assertEqual(policies, [])
         self.assertEqual(total, 0)
+
+    def test_filters_batch_query_by_customer_ids_and_accessible_brokers(self) -> None:
+        policies, total = self.repository.list_for_brokers(
+            broker_ids=["broker-a", "broker-b"],
+            customer_id=None,
+            customer_ids=["customer-a2", "customer-b1"],
+            offset=0,
+            limit=None,
+        )
+
+        self.assertEqual(total, 2)
+        self.assertEqual(
+            {policy.customer_id for policy in policies},
+            {"customer-a2", "customer-b1"},
+        )

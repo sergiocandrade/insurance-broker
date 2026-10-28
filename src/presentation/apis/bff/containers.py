@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
+from application.use_cases.get_customer_details import GetCustomerDetailsUseCase
 from application.use_cases.list_broker_customers import ListBrokerCustomersUseCase
 from application.use_cases.list_policies import ListPoliciesUseCase
 from application.use_cases.reset_password import ConfirmPasswordResetUseCase, RequestPasswordResetUseCase
@@ -111,6 +112,16 @@ class Container(containers.DeclarativeContainer):
         authentication_engine=authentication_engine,
         broker_service=broker_service,
         customer_service=customer_service,
+        policy_service=policy_service,
+        user_service=user_service,
+    )
+
+    get_customer_details_use_case = providers.Factory(
+        GetCustomerDetailsUseCase,
+        authentication_engine=authentication_engine,
+        broker_service=broker_service,
+        customer_service=customer_service,
+        policy_service=policy_service,
         user_service=user_service,
     )
 

@@ -10,6 +10,7 @@ class PolicyRepository(ABC):
         broker_ids: list[str],
         customer_id: str | None,
         offset: int,
-        limit: int,
+        limit: int | None,
+        customer_ids: list[str] | None = None,
     ) -> tuple[list[PolicyModel], int]:
         raise NotImplementedError

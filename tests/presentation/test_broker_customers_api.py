@@ -77,3 +77,44 @@ class BrokerCustomersApiTests(unittest.TestCase):
         use_case.execute.assert_called_once_with(
             access_token="test-token", broker_id=None, page=1, page_size=20,
         )
+
+    def test_customer_list_defaults_to_summary_view(self) -> None:
+        use_case = Mock(spec=ListBrokerCustomersUseCase)
+        use_case.execute.return_value = (
+            [CustomerModel(
+                id="customer-id", name="Customer", customer_type=CustomerType.PERSON,
+                phone="+5511999999999", email="customer@example.com", broker_id="broker-id",
+                created_at=datetime(2026, 10, 28, tzinfo=UTC),
+            )],
+            1,
+        )
+        with app.state.container.list_broker_customers_use_case.override(use_case):
+            response = self.client.get("/customers", headers={"Authorization": "Bearer test-token"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0], {
+            "id": "customer-id", "name": "Customer", "customer_type": "PERSON",
+        })
+
+    def test_customer_list_detailed_view_includes_policies(self) -> None:
+        use_case = Mock(spec=ListBrokerCustomersUseCase)
+        customer = CustomerModel(
+            id="customer-id", name="Customer", customer_type=CustomerType.PERSON,
+            phone="+5511999999999", email="customer@example.com", broker_id="broker-id",
+            created_at=datetime(2026, 10, 28, tzinfo=UTC),
+        )
+        use_case.execute_with_policies.return_value = ([customer], [], 1)
+        with app.state.container.list_broker_customers_use_case.override(use_case):
+            response = self.client.get(
+                "/customers?view=detailed",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        item = response.json()["items"][0]
+        self.assertEqual(item["id"], "customer-id")
+        self.assertEqual(item["phone"], "+5511999999999")
+        self.assertEqual(item["policies"], [])
+        use_case.execute_with_policies.assert_called_once_with(
+            access_token="test-token", broker_id=None, page=1, page_size=20,
+        )
