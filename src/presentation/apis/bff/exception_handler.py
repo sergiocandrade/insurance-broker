@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from domain.exceptions.user import UserNotFoundException
-from domain.exceptions.domain import DomainException, NotFoundException, ForbiddenException
+from domain.exceptions.domain import ConflictException, DomainException, NotFoundException, ForbiddenException
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from starlette.responses import Response
@@ -70,6 +70,8 @@ def handle_exceptions() -> Iterator[None]:
         raise HTTPException(status_code=404, detail=str(error)) from None
     except ForbiddenException as error:
         raise HTTPException(status_code=403, detail=str(error)) from None
+    except ConflictException as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
     except PersistenceError:
         raise HTTPException(status_code=503, detail="Persistence service unavailable") from None
     except (DomainException, UseCaseException) as error:

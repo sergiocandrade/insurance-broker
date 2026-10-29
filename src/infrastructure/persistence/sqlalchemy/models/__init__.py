@@ -8,9 +8,10 @@ from .policy_model import PolicyModel
 from .insurance_branch_model import InsuranceBranchModel
 from .insurance_product_model import InsuranceProductModel
 from .insurer_product_model import InsurerProductModel
+from .waiting_list_model import WaitingListModel
 
 __all__ = [
 	"Base", "UserModel", "BrokerModel", "UserBrokerModel", "CustomerModel", "InsurerModel",
 	"InsuranceCategoryModel", "PolicyModel", "InsuranceBranchModel", "InsuranceProductModel",
-	"InsurerProductModel",
+	"InsurerProductModel", "WaitingListModel",
 ]

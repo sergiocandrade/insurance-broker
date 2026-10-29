@@ -18,7 +18,9 @@ from application.use_cases.reset_password import ConfirmPasswordResetUseCase, Re
 from domain.exceptions.authentication import AuthenticationError
 from infrastructure.persistence.exceptions import PersistenceError
 from domain.models.user import UserModel as DomainUserModel, UserStatus
+from domain.models.waiting_list import WaitingListEntryModel
 from domain.repositories.user import UserRepository
+from domain.repositories.waiting_list import WaitingListRepository
 from domain.services.authentication import AuthenticationChallenge, AuthenticationEngine, SignUpResult
 from domain.services.user import UserService
 from infrastructure.authentication import cognito as cognito_module
@@ -49,18 +51,24 @@ class SignUpResultTests(unittest.TestCase):
 
     def test_signup_endpoint_returns_only_result_fields(self) -> None:
         use_case = Mock(spec=SignUpUseCase)
-        use_case.execute.return_value = SignUpResult(user_id="user-id", user_confirmed=True)
+        use_case.execute.return_value = WaitingListEntryModel(
+            id="entry-id", email="user@example.com", phone="+5511999999999", region="SP",
+            insurance_categories=("Pessoas",), created_at=datetime(2026, 10, 29, tzinfo=UTC),
+        )
 
         with app.state.container.sign_up_use_case.override(use_case), TestClient(app) as client:
-            response = client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+            response = client.post("/auth/sign-up", json={
+                "email": "user@example.com", "phone": "+5511999999999", "region": "SP",
+                "insurance_categories": ["Pessoas"],
+            })
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json(), {"user_id": "user-id", "user_confirmed": True})
+        self.assertEqual(response.json(), {"id": "entry-id", "created_at": "2026-10-29T00:00:00Z"})
 
     def test_signup_response_schema_matches_result_fields(self) -> None:
         schema = app.openapi()["components"]["schemas"]["SignUpResponse"]
 
-        self.assertEqual(set(schema["properties"]), {"user_id", "user_confirmed"})
+        self.assertEqual(set(schema["properties"]), {"id", "created_at"})
 
 
 class SettingsTests(unittest.TestCase):
@@ -221,6 +229,10 @@ class SignInTests(unittest.TestCase):
             "new_password": "new-test-password",
             "session": "challenge-session",
         }
+        self.sign_up_body = {
+            "email": "user@example.com", "phone": "+55 11 99999-9999", "region": "São Paulo",
+            "insurance_categories": ["Pessoas", "Viagem"],
+        }
         self.logged_user = DomainUserModel(
             id="local-user-id", email="user@example.com", external_id="cognito-user-sub",
             status=UserStatus.REGISTERED, name="Example User",
@@ -326,156 +338,74 @@ class SignInTests(unittest.TestCase):
         use_case.execute.assert_called_once_with(access_token="test-access-token")
         self.client_factory.assert_not_called()
 
-    def test_sign_up_creates_user_and_auto_confirms_email(self) -> None:
-        self.cognito.sign_up.return_value = {
-            "UserSub": "user-id", "UserConfirmed": False,
-            "CodeDeliveryDetails": {"Destination": "u***@example.com", "DeliveryMedium": "EMAIL"},
-        }
-        response = self.client.post("/auth/sign-up", json={
-            "email": "user@example.com", "password": "test-password",
-        })
+    def test_sign_up_saves_waiting_list_entry(self) -> None:
+        waiting_list_repository = Mock(spec=WaitingListRepository)
+        waiting_list_repository.exists_by_email.return_value = False
+
+        with app.state.container.waiting_list_repository.override(waiting_list_repository):
+            response = self.client.post("/auth/sign-up", json=self.sign_up_body)
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json(), {
-            "user_id": "user-id", "user_confirmed": True,
-        })
+        self.assertEqual(set(response.json()), {"id", "created_at"})
         self.assertEqual(response.headers["Cache-Control"], "no-store")
-        expected_hash = base64.b64encode(hmac.new(
-            b"test-secret", b"user@example.comtest-client", hashlib.sha256,
-        ).digest()).decode("ascii")
-        self.cognito.sign_up.assert_called_once_with(
-            ClientId="test-client", Username="user@example.com", Password="test-password",
-            SecretHash=expected_hash, UserAttributes=[{"Name": "email", "Value": "user@example.com"}],
-        )
-        self.cognito.admin_confirm_sign_up.assert_called_once_with(
-            UserPoolId="us-east-1_testpool", Username="user@example.com",
-        )
-        self.cognito.admin_update_user_attributes.assert_called_once_with(
-            UserPoolId="us-east-1_testpool", Username="user@example.com",
-            UserAttributes=[{"Name": "email_verified", "Value": "true"}],
-        )
-        self.assertEqual([call[0] for call in self.cognito.method_calls], [
-            "sign_up", "admin_confirm_sign_up", "admin_update_user_attributes",
-        ])
-        self.assertNotIn("test-password", response.text)
-        self.user_repository.add.assert_called_once()
-        user = self.user_repository.add.call_args.args[0]
-        self.assertEqual(user.id, "user-id")
-        self.assertEqual(user.email, "user@example.com")
-        self.assertEqual(user.external_id, "user-id")
-        self.assertEqual(user.status, UserStatus.EMAIL_CONFIRMED)
+        entry = waiting_list_repository.add.call_args.args[0]
+        self.assertEqual(entry.id, response.json()["id"])
+        self.assertEqual(entry.email, "user@example.com")
+        self.assertEqual(entry.phone, "+55 11 99999-9999")
+        self.assertEqual(entry.region, "São Paulo")
+        self.assertEqual(entry.insurance_categories, ("Pessoas", "Viagem"))
+        self.client_factory.assert_not_called()
 
-    def test_sign_up_stops_if_admin_confirmation_fails(self) -> None:
-        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
-        self.cognito.admin_confirm_sign_up.side_effect = ClientError(
-            {"Error": {"Code": "AccessDeniedException", "Message": "private AWS details"}}, "AdminConfirmSignUp",
-        )
+    def test_sign_up_rejects_duplicate_email(self) -> None:
+        waiting_list_repository = Mock(spec=WaitingListRepository)
+        waiting_list_repository.exists_by_email.return_value = True
 
-        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
+        with app.state.container.waiting_list_repository.override(waiting_list_repository):
+            response = self.client.post("/auth/sign-up", json=self.sign_up_body)
 
-        self.assertEqual(response.status_code, 502)
-        self.assertNotIn("private AWS details", response.text)
-        self.cognito.admin_update_user_attributes.assert_not_called()
-        self.user_repository.add.assert_not_called()
-
-    def test_sign_up_stops_if_email_verification_update_fails(self) -> None:
-        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
-        self.cognito.admin_update_user_attributes.side_effect = ClientError(
-            {"Error": {"Code": "AccessDeniedException", "Message": "private AWS details"}}, "AdminUpdateUserAttributes",
-        )
-
-        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
-
-        self.assertEqual(response.status_code, 502)
-        self.assertNotIn("private AWS details", response.text)
-        self.user_repository.add.assert_not_called()
-
-    def test_sign_up_stops_if_confirmation_service_is_unavailable(self) -> None:
-        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
-        self.cognito.admin_confirm_sign_up.side_effect = EndpointConnectionError(endpoint_url="https://cognito.example.com")
-
-        response = self.client.post("/auth/sign-up", json={"email": "user@example.com", "password": "test-password"})
-
-        self.assertEqual(response.status_code, 503)
-        self.user_repository.add.assert_not_called()
-
-    def test_sign_up_reports_profile_persistence_failure(self) -> None:
-        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": False}
-        self.user_repository.add.side_effect = PersistenceError("private database details")
-
-        response = self.client.post("/auth/sign-up", json={
-            "email": "user@example.com", "password": "test-password",
-        })
-
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("Registration succeeded in Cognito", response.json()["detail"])
-        self.assertNotIn("private database details", response.text)
-
-    def test_sign_up_supports_auto_confirmed_users(self) -> None:
-        self.cognito.sign_up.return_value = {"UserSub": "user-id", "UserConfirmed": True}
-        response = self.client.post("/auth/sign-up", json={
-            "email": "user@example.com", "password": "test-password",
-        })
-        self.assertEqual(response.status_code, 201)
-        self.assertTrue(response.json()["user_confirmed"])
-        self.cognito.admin_confirm_sign_up.assert_not_called()
-        self.cognito.admin_update_user_attributes.assert_called_once_with(
-            UserPoolId="us-east-1_testpool", Username="user@example.com",
-            UserAttributes=[{"Name": "email_verified", "Value": "true"}],
-        )
-
-    def test_sign_up_errors_are_sanitized(self) -> None:
-        for code, expected_status in (
-            ("UsernameExistsException", 409), ("InvalidPasswordException", 400),
-            ("InvalidParameterException", 400), ("NotAuthorizedException", 403),
-            ("ForbiddenException", 403), ("TooManyRequestsException", 429),
-            ("LimitExceededException", 429), ("InternalErrorException", 502),
-        ):
-            with self.subTest(code=code):
-                self.cognito.sign_up.side_effect = ClientError(
-                    {"Error": {"Code": code, "Message": "private AWS details"}}, "SignUp",
-                )
-                response = self.client.post("/auth/sign-up", json={
-                    "email": "user@example.com", "password": "test-password",
-                })
-                self.assertEqual(response.status_code, expected_status)
-                self.assertNotIn("private AWS details", response.text)
+        self.assertEqual(response.status_code, 409)
+        waiting_list_repository.add.assert_not_called()
 
     def test_sign_up_validates_required_fields(self) -> None:
-        valid = {"email": "user@example.com", "password": "test-password"}
-        for field in valid:
+        for field in self.sign_up_body:
             with self.subTest(field=field):
-                response = self.client.post("/auth/sign-up", json={**valid, field: ""})
+                body = {key: value for key, value in self.sign_up_body.items() if key != field}
+                response = self.client.post("/auth/sign-up", json=body)
                 self.assertEqual(response.status_code, 422)
-        response = self.client.post("/auth/sign-up", json={**valid, "email": "not-an-email"})
-        self.assertEqual(response.status_code, 422)
+        for field, value in (
+            ("email", "not-an-email"), ("phone", "abc"), ("region", ""),
+            ("insurance_categories", []), ("insurance_categories", [" "]),
+        ):
+            with self.subTest(field=field, value=value):
+                response = self.client.post("/auth/sign-up", json={**self.sign_up_body, field: value})
+                self.assertEqual(response.status_code, 422)
         self.client_factory.assert_not_called()
 
-    def test_sign_up_service_unavailable(self) -> None:
-        self.cognito.sign_up.side_effect = EndpointConnectionError(endpoint_url="https://cognito.example.com")
-        response = self.client.post("/auth/sign-up", json={
-            "email": "user@example.com", "password": "test-password",
-        })
-        self.assertEqual(response.status_code, 503)
+    def test_sign_up_accepts_comma_separated_categories(self) -> None:
+        waiting_list_repository = Mock(spec=WaitingListRepository)
+        waiting_list_repository.exists_by_email.return_value = False
 
-    def test_sign_up_missing_configuration(self) -> None:
-        with patch.dict("os.environ", {}, clear=True):
+        with app.state.container.waiting_list_repository.override(waiting_list_repository):
             response = self.client.post("/auth/sign-up", json={
-                "email": "user@example.com", "password": "test-password",
+                **self.sign_up_body, "insurance_categories": "Pessoas, Viagem,",
             })
-        self.assertEqual(response.status_code, 503)
-        self.client_factory.assert_not_called()
+
+        self.assertEqual(response.status_code, 201)
+        entry = waiting_list_repository.add.call_args.args[0]
+        self.assertEqual(entry.insurance_categories, ("Pessoas", "Viagem"))
 
     def test_sign_up_use_case_can_be_overridden(self) -> None:
         use_case = Mock(spec=SignUpUseCase)
-        use_case.execute.return_value = SignUpResult(user_id="user-id", user_confirmed=False)
+        use_case.execute.return_value = WaitingListEntryModel(
+            id="entry-id", email="user@example.com", phone="+55 11 99999-9999", region="São Paulo",
+            insurance_categories=("Pessoas", "Viagem"),
+        )
         with app.state.container.sign_up_use_case.override(use_case):
-            response = self.client.post("/auth/sign-up", json={
-                "username": "test-user", "email": "user@example.com", "password": "test-password",
-            })
+            response = self.client.post("/auth/sign-up", json=self.sign_up_body)
         self.assertEqual(response.status_code, 201)
         use_case.execute.assert_called_once_with(
-            email="user@example.com", password="test-password",
+            email="user@example.com", phone="+55 11 99999-9999", region="São Paulo",
+            insurance_categories=["Pessoas", "Viagem"],
         )
         self.client_factory.assert_not_called()
 

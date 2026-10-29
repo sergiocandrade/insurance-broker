@@ -14,6 +14,7 @@ from domain.services.user import UserService
 from domain.services.broker import BrokerService
 from domain.services.customer import CustomerService
 from domain.services.policy import PolicyService
+from domain.services.waiting_list import WaitingListService
 from infrastructure.authentication.cognito import CognitoAuthenticationEngine
 from infrastructure.config.settings import DatabaseSettings, Settings
 from infrastructure.persistence.sqlalchemy.database import create_database_engine
@@ -21,6 +22,7 @@ from infrastructure.persistence.sqlalchemy.repositories.user_repository import S
 from infrastructure.persistence.sqlalchemy.repositories.broker_repository import SqlAlchemyBrokerRepository
 from infrastructure.persistence.sqlalchemy.repositories.customer_repository import SqlAlchemyCustomerRepository
 from infrastructure.persistence.sqlalchemy.repositories.policy_repository import SqlAlchemyPolicyRepository
+from infrastructure.persistence.sqlalchemy.repositories.waiting_list_repository import SqlAlchemyWaitingListRepository
 
 
 class Container(containers.DeclarativeContainer):
@@ -81,6 +83,16 @@ class Container(containers.DeclarativeContainer):
         policy_repository=policy_repository,
     )
 
+    waiting_list_repository = providers.Factory(
+        SqlAlchemyWaitingListRepository,
+        session_factory=session_factory,
+    )
+
+    waiting_list_service = providers.Factory(
+        WaitingListService,
+        waiting_list_repository=waiting_list_repository,
+    )
+
     authentication_engine = providers.Factory(
         CognitoAuthenticationEngine,
         region=settings.provided.AWS_REGION,
@@ -136,9 +148,7 @@ class Container(containers.DeclarativeContainer):
 
     sign_up_use_case = providers.Factory(
         SignUpUseCase,
-        authentication_engine=authentication_engine,
-        user_service=user_service,
-        broker_service=broker_service,
+        waiting_list_service=waiting_list_service,
     )
 
     complete_new_password_use_case = providers.Factory(

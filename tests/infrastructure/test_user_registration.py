@@ -1,22 +1,25 @@
 from dataclasses import replace
 from datetime import datetime
+import json
 import unittest
-from unittest.mock import Mock
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from application.use_cases.sign_up import SignUpUseCase
-from domain.exceptions.authentication import AuthenticationError
+from domain.exceptions.waiting_list import WaitingListEntryAlreadyExistsException
 from infrastructure.persistence.exceptions import PersistenceError
 from domain.models.broker import BrokerStatus
 from domain.models.user import UserStatus
+from domain.models.waiting_list import WaitingListEntryModel
 from domain.services.user import UserService
-from domain.services.broker import BrokerService
-from domain.services.authentication import AuthenticationEngine, SignUpResult
-from infrastructure.persistence.sqlalchemy.models import Base, BrokerModel, UserBrokerModel, UserModel
+from domain.services.waiting_list import WaitingListService
+from infrastructure.persistence.sqlalchemy.models import (
+    Base, BrokerModel, UserBrokerModel, UserModel, WaitingListModel,
+)
 from infrastructure.persistence.sqlalchemy.repositories.user_repository import SqlAlchemyUserRepository
 from infrastructure.persistence.sqlalchemy.repositories.broker_repository import SqlAlchemyBrokerRepository
+from infrastructure.persistence.sqlalchemy.repositories.waiting_list_repository import SqlAlchemyWaitingListRepository
 
 
 class UserRegistrationTests(unittest.TestCase):
@@ -122,23 +125,34 @@ class UserRegistrationTests(unittest.TestCase):
             self.assertEqual(len(session.scalars(select(UserModel)).all()), 2)
             self.assertEqual({link.user_id for link in session.scalars(select(UserBrokerModel))}, {"local-user-id"})
 
-    def test_signup_activates_all_brokers_associated_with_user(self) -> None:
-        authentication = Mock(spec=AuthenticationEngine)
-        authentication.sign_up.return_value = SignUpResult(user_id="new-cognito-sub", user_confirmed=False)
-        use_case = SignUpUseCase(
-            authentication,
-            UserService(self.repository),
-            BrokerService(SqlAlchemyBrokerRepository(self.sessions)),
+    def test_signup_saves_waiting_list_entry_with_categories_as_text(self) -> None:
+        use_case = SignUpUseCase(WaitingListService(SqlAlchemyWaitingListRepository(self.sessions)))
+
+        entry = use_case.execute(
+            email="new@example.com", phone="+55 11 99999-9999", region="São Paulo",
+            insurance_categories=["Automóvel e Mobilidade", "Viagem"],
         )
 
-        result = use_case.execute(email="user@example.com", password="test-password")
-
-        self.assertTrue(result.user_confirmed)
         with self.sessions() as session:
-            user = session.get(UserModel, "local-user-id")
-            self.assertEqual(user.external_id, "new-cognito-sub")
-            self.assertEqual(user.status, UserStatus.REGISTERED)
-            self.assertEqual(session.get(BrokerModel, "first-broker").status, BrokerStatus.ACTIVE)
-            self.assertEqual(session.get(BrokerModel, "second-broker").status, BrokerStatus.ACTIVE)
-            self.assertEqual(session.get(BrokerModel, "unrelated-broker").status, BrokerStatus.PENDING)
-            self.assertEqual(len(session.scalars(select(UserModel)).all()), 2)
+            saved = session.get(WaitingListModel, entry.id)
+            self.assertEqual(saved.email, "new@example.com")
+            self.assertEqual(saved.phone, "+55 11 99999-9999")
+            self.assertEqual(saved.region, "São Paulo")
+            self.assertEqual(json.loads(saved.insurance_categories), ["Automóvel e Mobilidade", "Viagem"])
+            self.assertIsNotNone(saved.created_at)
+
+        with self.assertRaises(WaitingListEntryAlreadyExistsException):
+            use_case.execute(
+                email=" New@Example.com", phone="+55 11 99999-9999", region="São Paulo",
+                insurance_categories=["Viagem"],
+            )
+
+    def test_repository_reports_duplicate_email_as_conflict(self) -> None:
+        repository = SqlAlchemyWaitingListRepository(self.sessions)
+        entry = WaitingListEntryModel(
+            id="first", email="new@example.com", phone="+5511999999999", region="SP", insurance_categories=("Viagem",),
+        )
+        repository.add(entry)
+
+        with self.assertRaises(WaitingListEntryAlreadyExistsException):
+            repository.add(replace(entry, id="second"))

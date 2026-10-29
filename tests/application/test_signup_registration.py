@@ -2,14 +2,14 @@ import unittest
 from unittest.mock import Mock
 
 from application.use_cases.sign_up import SignUpUseCase
-from domain.exceptions.authentication import AuthenticationError
 from domain.exceptions.user import UserNotPreRegistredException
+from domain.exceptions.waiting_list import WaitingListEntryAlreadyExistsException
 from infrastructure.persistence.exceptions import PersistenceError
 from domain.models.user import UserModel, UserStatus
 from domain.repositories.user import UserRepository
-from domain.services.authentication import AuthenticationEngine, SignUpResult
+from domain.repositories.waiting_list import WaitingListRepository
 from domain.services.user import UserService
-from domain.services.broker import BrokerService
+from domain.services.waiting_list import WaitingListService
 
 
 class SignupRegistrationTests(unittest.TestCase):
@@ -18,46 +18,39 @@ class SignupRegistrationTests(unittest.TestCase):
         self.repository.fetch_user_by_email.return_value = UserModel(
             id="local-user-id", email="user@example.com", external_id="provisioned-id", status=UserStatus.PENDING,
         )
-        self.authentication = Mock(spec=AuthenticationEngine)
-        self.authentication.sign_up.return_value = SignUpResult(user_id="new-cognito-sub", user_confirmed=False)
-        self.broker_service = Mock(spec=BrokerService)
-        self.broker_service.list_brokers_for_user.return_value = []
-        self.use_case = SignUpUseCase(self.authentication, UserService(self.repository), self.broker_service)
+        self.waiting_list_repository = Mock(spec=WaitingListRepository)
+        self.waiting_list_repository.exists_by_email.return_value = False
+        self.use_case = SignUpUseCase(WaitingListService(self.waiting_list_repository))
 
-    def test_existing_user_is_registered_and_brokers_are_loaded(self) -> None:
-        result = self.use_case.execute(email="user@example.com", password="test-password")
-
-        self.repository.fetch_user_by_email.assert_called_once_with(email="user@example.com")
-        self.authentication.sign_up.assert_called_once_with(
-            username="user@example.com", email="user@example.com", password="test-password",
+    def execute(self):
+        return self.use_case.execute(
+            email="user@example.com", phone="+55 11 99999-9999", region="São Paulo",
+            insurance_categories=["Pessoas", "Viagem", "Pessoas"],
         )
-        self.repository.update.assert_called_once()
-        self.broker_service.list_brokers_for_user.assert_called_once_with(user_id="local-user-id")
-        self.assertEqual(result.user_id, "new-cognito-sub")
-        self.assertTrue(result.user_confirmed)
 
-    def test_unprovisioned_registration_does_not_create_cognito_account(self) -> None:
-        self.repository.fetch_user_by_email.return_value = None
+    def test_sign_up_saves_entry_in_waiting_list(self) -> None:
+        entry = self.execute()
 
-        with self.assertRaises(UserNotPreRegistredException):
-            self.use_case.execute(email="user@example.com", password="test-password")
+        self.waiting_list_repository.add.assert_called_once_with(entry)
+        self.assertEqual(entry.email, "user@example.com")
+        self.assertEqual(entry.phone, "+55 11 99999-9999")
+        self.assertEqual(entry.region, "São Paulo")
+        self.assertEqual(entry.insurance_categories, ("Pessoas", "Viagem"))
+        self.assertIsNotNone(entry.created_at)
 
-        self.authentication.sign_up.assert_not_called()
-        self.repository.update.assert_not_called()
+    def test_duplicate_email_is_rejected(self) -> None:
+        self.waiting_list_repository.exists_by_email.return_value = True
 
-    def test_cognito_signup_failure_does_not_update_local_registration(self) -> None:
-        self.authentication.sign_up.side_effect = AuthenticationError("service_error", "Cognito failed")
+        with self.assertRaises(WaitingListEntryAlreadyExistsException):
+            self.execute()
 
-        with self.assertRaises(AuthenticationError):
-            self.use_case.execute(email="user@example.com", password="test-password")
+        self.waiting_list_repository.add.assert_not_called()
 
-        self.repository.update.assert_not_called()
-
-    def test_registration_persistence_failure_is_not_reported_as_success(self) -> None:
-        self.repository.update.side_effect = PersistenceError("Registration failed")
+    def test_persistence_failure_is_not_reported_as_success(self) -> None:
+        self.waiting_list_repository.add.side_effect = PersistenceError("Save failed")
 
         with self.assertRaises(PersistenceError):
-            self.use_case.execute(email="user@example.com", password="test-password")
+            self.execute()
 
     def test_activate_user_updates_domain_model_and_repository(self) -> None:
         user = self.repository.fetch_user_by_email.return_value

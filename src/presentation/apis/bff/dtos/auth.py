@@ -1,4 +1,10 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
+from datetime import datetime
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, StringConstraints, field_validator
+
+
+CategoryName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 
 
 class CurrentUserResponse(BaseModel):
@@ -15,12 +21,21 @@ class SignInRequest(BaseModel):
 
 class SignUpRequest(BaseModel):
     email: EmailStr = Field(max_length=128)
-    password: SecretStr = Field(min_length=1, max_length=256)
+    phone: str = Field(min_length=8, max_length=32, pattern=r"^\+?[0-9 ()-]+$")
+    region: str = Field(min_length=1, max_length=128)
+    insurance_categories: list[CategoryName] = Field(min_length=1, max_length=50)
+
+    @field_validator("insurance_categories", mode="before")
+    @classmethod
+    def split_categories(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [category for category in value.split(",") if category.strip()]
+        return value
 
 
 class SignUpResponse(BaseModel):
-    user_id: str
-    user_confirmed: bool
+    id: str
+    created_at: datetime
 
 
 class NewPasswordRequest(BaseModel):

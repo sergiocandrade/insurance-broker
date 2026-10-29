@@ -127,20 +127,19 @@ def get_current_brokers(
 
 @router.post("/sign-up", response_model=SignUpResponse, status_code=201)
 def sign_up(
-    credentials: SignUpRequest,
+    request: SignUpRequest,
     response: Response,
     use_case: SignUpUseCase = Depends(get_sign_up_use_case),
 ) -> SignUpResponse:
-    result = use_case.execute(
-        email=str(credentials.email),
-        password=credentials.password.get_secret_value(),
+    entry = use_case.execute(
+        email=str(request.email),
+        phone=request.phone,
+        region=request.region,
+        insurance_categories=request.insurance_categories,
     )
 
     response.headers["Cache-Control"] = "no-store"
-    return SignUpResponse(
-        user_id=result.user_id,
-        user_confirmed=result.user_confirmed,
-    )
+    return SignUpResponse(id=entry.id, created_at=entry.created_at)
 
 
 @router.post("/sign-in", response_model=SignInTokens | SignInChallenge)

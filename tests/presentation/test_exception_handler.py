@@ -105,7 +105,10 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
     def test_every_auth_endpoint_intercepts_use_case_errors(self) -> None:
         for method, path, provider_name, body in (
             ("POST", "/auth/sign-in", "sign_in_use_case", self.credentials),
-            ("POST", "/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}),
+            ("POST", "/auth/sign-up", "sign_up_use_case", {
+                "email": "user@example.com", "phone": "+5511999999999", "region": "SP",
+                "insurance_categories": ["Pessoas"],
+            }),
             ("POST", "/auth/new-password", "complete_new_password_use_case", {
                 "username": "test-user", "new_password": "new-password", "session": "test-session",
             }),
@@ -127,7 +130,10 @@ class EndpointExceptionHandlerTests(unittest.TestCase):
 
     def test_persistence_errors_use_generic_safe_detail(self) -> None:
         for path, provider_name, body in (
-            ("/auth/sign-up", "sign_up_use_case", {"email": "user@example.com", "password": "test-password"}),
+            ("/auth/sign-up", "sign_up_use_case", {
+                "email": "user@example.com", "phone": "+5511999999999", "region": "SP",
+                "insurance_categories": ["Pessoas"],
+            }),
         ):
             with self.subTest(path=path):
                 use_case = Mock()
