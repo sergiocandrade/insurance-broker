@@ -1,6 +1,7 @@
 from dependency_injector import containers, providers
 from sqlalchemy.orm import sessionmaker
 
+from application.use_cases.activate_user import ActivateUserUseCase
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
@@ -149,6 +150,13 @@ class Container(containers.DeclarativeContainer):
     sign_up_use_case = providers.Factory(
         SignUpUseCase,
         waiting_list_service=waiting_list_service,
+    )
+
+    activate_user_use_case = providers.Factory(
+        ActivateUserUseCase,
+        authentication_engine=authentication_engine,
+        user_service=user_service,
+        broker_service=broker_service,
     )
 
     complete_new_password_use_case = providers.Factory(

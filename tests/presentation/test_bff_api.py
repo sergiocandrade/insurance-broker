@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from application.use_cases import sign_in as sign_in_module
+from application.use_cases.activate_user import ActivateUserUseCase
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.sign_up import SignUpUseCase
@@ -407,6 +408,29 @@ class SignInTests(unittest.TestCase):
             email="user@example.com", phone="+55 11 99999-9999", region="São Paulo",
             insurance_categories=["Pessoas", "Viagem"],
         )
+        self.client_factory.assert_not_called()
+
+    def test_activate_use_case_can_be_overridden(self) -> None:
+        use_case = Mock(spec=ActivateUserUseCase)
+        use_case.execute.return_value = SignUpResult(user_id="user-id", user_confirmed=True)
+        with app.state.container.activate_user_use_case.override(use_case):
+            response = self.client.post("/auth/activate", json={
+                "username": "user@example.com", "password": "test-password",
+            })
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json(), {"user_id": "user-id", "user_confirmed": True})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn("test-password", response.text)
+        use_case.execute.assert_called_once_with(email="user@example.com", password="test-password")
+
+    def test_activate_validates_required_fields(self) -> None:
+        valid = {"username": "user@example.com", "password": "test-password"}
+        for field in valid:
+            with self.subTest(field=field):
+                response = self.client.post("/auth/activate", json={**valid, field: ""})
+                self.assertEqual(response.status_code, 422)
+        response = self.client.post("/auth/activate", json={**valid, "username": "not-an-email"})
+        self.assertEqual(response.status_code, 422)
         self.client_factory.assert_not_called()
 
     def test_email_verification_endpoints_are_removed(self) -> None:

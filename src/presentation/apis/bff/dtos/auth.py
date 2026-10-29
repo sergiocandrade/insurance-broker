@@ -38,6 +38,16 @@ class SignUpResponse(BaseModel):
     created_at: datetime
 
 
+class ActivateRequest(BaseModel):
+    email: EmailStr = Field(max_length=128)
+    password: SecretStr = Field(min_length=1, max_length=256)
+
+
+class ActivateResponse(BaseModel):
+    user_id: str
+    user_confirmed: bool
+
+
 class NewPasswordRequest(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     new_password: SecretStr = Field(min_length=1, max_length=256)

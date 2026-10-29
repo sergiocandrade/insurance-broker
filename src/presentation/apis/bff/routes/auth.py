@@ -4,6 +4,7 @@ from dependency_injector.wiring import Provider, inject
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from application.use_cases.activate_user import ActivateUserUseCase
 from application.use_cases.complete_new_password import CompleteNewPasswordUseCase
 from application.use_cases.get_current_user import GetCurrentUserUseCase
 from application.use_cases.get_current_brokers import GetCurrentBrokersUseCase
@@ -13,6 +14,8 @@ from application.use_cases.sign_up import SignUpUseCase
 from presentation.apis.bff.containers import Container
 from domain.services.authentication import AuthenticationResult, AuthenticationTokens
 from presentation.apis.bff.dtos.auth import (
+    ActivateRequest,
+    ActivateResponse,
     ConfirmPasswordResetRequest,
     CurrentUserResponse,
     NewPasswordRequest,
@@ -70,6 +73,13 @@ def get_sign_in_use_case(
 def get_sign_up_use_case(
     use_case_provider: Callable[[], SignUpUseCase] = Depends(Provider[Container.sign_up_use_case]),
 ) -> SignUpUseCase:
+    return use_case_provider()
+
+
+@inject
+def get_activate_user_use_case(
+    use_case_provider: Callable[[], ActivateUserUseCase] = Depends(Provider[Container.activate_user_use_case]),
+) -> ActivateUserUseCase:
     return use_case_provider()
 
 
@@ -140,6 +150,24 @@ def sign_up(
 
     response.headers["Cache-Control"] = "no-store"
     return SignUpResponse(id=entry.id, created_at=entry.created_at)
+
+
+@router.post("/activate", response_model=ActivateResponse, status_code=201)
+def activate(
+    credentials: ActivateRequest,
+    response: Response,
+    use_case: ActivateUserUseCase = Depends(get_activate_user_use_case),
+) -> ActivateResponse:
+    result = use_case.execute(
+        email=str(credentials.email),
+        password=credentials.password.get_secret_value(),
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+    return ActivateResponse(
+        user_id=result.user_id,
+        user_confirmed=result.user_confirmed,
+    )
 
 
 @router.post("/sign-in", response_model=SignInTokens | SignInChallenge)
