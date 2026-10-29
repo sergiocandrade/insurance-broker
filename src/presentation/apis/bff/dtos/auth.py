@@ -1,18 +1,11 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
-
-from domain.models.user import UserStatus
 
 
 class CurrentUserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id: str
+    name: str
     email: str
-    external_id: str | None
-    status: UserStatus
-    created_at: datetime
 
 
 class SignInRequest(BaseModel):

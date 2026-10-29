@@ -45,6 +45,7 @@ class SqlAlchemyUserRepository(UserRepository):
                 if record is None:
                     raise PersistenceError("User profile not found")
                 record.email = user.email
+                record.name = user.name
                 record.external_id = user.external_id
                 record.status = user.status
                 record.activated_at = user.activated_at

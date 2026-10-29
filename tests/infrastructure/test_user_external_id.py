@@ -30,8 +30,10 @@ class NullableUserExternalIdTests(unittest.TestCase):
                 self.assertIsNone(record.external_id)
                 user = UserMapper.to_domain(record)
                 self.assertIsNone(user.external_id)
+                self.assertEqual(user.name, "Example User")
                 self.assertIsNone(UserMapper.to_model(user).external_id)
-                self.assertIsNone(CurrentUserResponse.model_validate(user).model_dump()["external_id"])
+                response = CurrentUserResponse.model_validate(user).model_dump()
+                self.assertEqual(response, {"name": "Example User", "email": "user@example.com"})
         finally:
             engine.dispose()
 

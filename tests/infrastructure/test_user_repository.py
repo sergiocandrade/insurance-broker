@@ -49,7 +49,8 @@ class UserRepositoryTests(unittest.TestCase):
     def test_get_by_external_id_returns_domain_user_with_status(self) -> None:
         user = DomainUserModel(
             id="local-id", email="user@example.com", external_id="cognito-sub",
-            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+            status=UserStatus.EMAIL_CONFIRMED, name="Example User",
+            created_at=datetime(2026, 10, 27, tzinfo=UTC),
         )
         self.repository.add(user)
 
@@ -61,7 +62,8 @@ class UserRepositoryTests(unittest.TestCase):
     def test_user_mapper_round_trip_preserves_domain_values(self) -> None:
         user = DomainUserModel(
             id="local-id", email="user@example.com", external_id="cognito-sub",
-            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+            status=UserStatus.EMAIL_CONFIRMED, name="Example User",
+            created_at=datetime(2026, 10, 27, tzinfo=UTC),
         )
 
         model = UserMapper.to_model(user)
@@ -74,7 +76,7 @@ class UserRepositoryTests(unittest.TestCase):
 
     def test_user_mapper_normalizes_aware_timestamps_to_utc(self) -> None:
         model = UserModel(
-            id="local-id", email="user@example.com", external_id="cognito-sub",
+            id="local-id", email="user@example.com", name="Example User", external_id="cognito-sub",
             status=UserStatus.REGISTERED,
             created_at=datetime(2026, 10, 27, 2, tzinfo=timezone(timedelta(hours=2))),
         )

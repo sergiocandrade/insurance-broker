@@ -223,7 +223,8 @@ class SignInTests(unittest.TestCase):
         }
         self.logged_user = DomainUserModel(
             id="local-user-id", email="user@example.com", external_id="cognito-user-sub",
-            status=UserStatus.EMAIL_CONFIRMED, created_at=datetime(2026, 10, 27, tzinfo=UTC),
+            status=UserStatus.REGISTERED, name="Example User",
+            created_at=datetime(2026, 10, 27, tzinfo=UTC),
         )
         self.cognito.get_user.return_value = {
             "UserAttributes": [{"Name": "sub", "Value": "cognito-user-sub"}],
@@ -234,10 +235,7 @@ class SignInTests(unittest.TestCase):
         response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            "id": "local-user-id", "email": "user@example.com", "external_id": "cognito-user-sub",
-            "status": "EMAIL_CONFIRMED", "created_at": "2026-10-27T00:00:00Z",
-        })
+        self.assertEqual(response.json(), {"name": "Example User", "email": "user@example.com"})
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.cognito.get_user.assert_called_once_with(AccessToken="test-access-token")
         self.user_repository.get_by_external_id.assert_called_once_with(external_id="cognito-user-sub")
@@ -306,6 +304,7 @@ class SignInTests(unittest.TestCase):
             email=self.logged_user.email,
             external_id=self.logged_user.external_id,
             status=self.logged_user.status,
+            name=self.logged_user.name,
             created_at=self.logged_user.created_at,
         )
 
@@ -313,7 +312,8 @@ class SignInTests(unittest.TestCase):
             response = self.client.get("/auth/me", headers={"Authorization": "Bearer test-access-token"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["id"], self.logged_user.id)
+        self.assertEqual(response.json()["name"], self.logged_user.name)
+        self.assertNotIn("id", response.json())
         service.get_info.assert_called_once_with(external_id="cognito-user-sub")
         self.user_repository.get_by_external_id.assert_not_called()
 

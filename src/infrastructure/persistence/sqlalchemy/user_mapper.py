@@ -17,6 +17,7 @@ class UserMapper:
             email=model.email,
             external_id=model.external_id,
             status=UserStatus(model.status),
+            name=model.name,
             created_at=created_at,
         )
 
@@ -25,6 +26,7 @@ class UserMapper:
         return SqlAlchemyUserModel(
             id=user.id,
             email=user.email,
+            name=user.name,
             external_id=user.external_id,
             status=user.status,
             created_at=user.created_at.astimezone(UTC).replace(tzinfo=None),

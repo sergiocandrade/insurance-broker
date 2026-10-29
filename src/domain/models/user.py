@@ -14,5 +14,6 @@ class UserModel:
     email: str
     external_id: str | None
     status: UserStatus
+    name: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     activated_at: datetime | None = None
