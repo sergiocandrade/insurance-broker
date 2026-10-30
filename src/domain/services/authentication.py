@@ -37,10 +37,6 @@ class AuthenticationEngine(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
     def sign_in(self, username: str, password: str) -> AuthenticationResult:
         raise NotImplementedError
 

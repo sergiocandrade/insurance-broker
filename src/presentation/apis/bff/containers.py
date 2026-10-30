@@ -98,8 +98,7 @@ class Container(containers.DeclarativeContainer):
         CognitoAuthenticationEngine,
         region=settings.provided.AWS_REGION,
         client_id=settings.provided.COGNITO_CLIENT_ID,
-        client_secret=settings.provided.COGNITO_CLIENT_SECRET.get_secret_value.call(),
-        user_pool_id=settings.provided.COGNITO_USER_POOL_ID,
+        client_secret=settings.provided.COGNITO_CLIENT_SECRET.get_secret_value.call()
     )
 
     sign_in_use_case = providers.Factory(

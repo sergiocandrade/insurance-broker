@@ -17,11 +17,10 @@ from domain.services.authentication import (
 
 
 class CognitoAuthenticationEngine(AuthenticationEngine):
-    def __init__(self, region: str, client_id: str, client_secret: str, user_pool_id: str) -> None:
+    def __init__(self, region: str, client_id: str, client_secret: str) -> None:
         self.region = region
         self.client_id = client_id
         self.client_secret = client_secret
-        self.user_pool_id = user_pool_id
 
     def _secret_hash(self, username: str) -> str:
         digest = hmac.new(
@@ -91,20 +90,6 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             user_id=result["UserSub"],
             user_confirmed=result["UserConfirmed"],
         )
-
-    def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:
-        try:
-            client = boto3.client("cognito-idp", region_name=self.region)
-            if not account_confirmed:
-                client.admin_confirm_sign_up(UserPoolId=self.user_pool_id, Username=username)            
-        except ClientError:
-            raise AuthenticationError(
-                "service_error", "User was created, but automatic email confirmation failed",
-            ) from None
-        except BotoCoreError:
-            raise AuthenticationError(
-                "service_unavailable", "User was created, but the email confirmation service is unavailable",
-            ) from None
 
     def sign_in(self, username: str, password: str) -> AuthenticationResult:
         auth_parameters = {

@@ -47,7 +47,6 @@ services:
       AWS_ACCESS_KEY_ID: '${AWS_ACCESS_KEY_ID:-}'
       AWS_SECRET_ACCESS_KEY: '${AWS_SECRET_ACCESS_KEY:-}'
       DATABASE_URL: '${DATABASE_URL:-mysql+pymysql://app_user:app_password@host.docker.internal:3310/insurance-broker?charset=utf8mb4}'
-      COGNITO_USER_POOL_ID: 'us-east-2_Ne8nhTbPk'
       COGNITO_CLIENT_ID: '2ct50nstimnvkl76aovvmqa32t'
       COGNITO_CLIENT_SECRET: '1vds79abfn0ehekc2irq7q0dm0qt83hj4cl6g62vu95k523jh6o7'
       
