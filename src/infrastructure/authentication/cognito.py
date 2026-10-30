@@ -57,28 +57,20 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
     def sign_up(self, username: str, email: str, password: str) -> SignUpResult:
         try:
             client = boto3.client("cognito-idp", region_name=self.region)
-            result = client.admin_create_user(
-                UserPoolId=self.user_pool_id,
+            result = client.sign_up(
+                ClientId=self.client_id,
+                SecretHash=self._secret_hash(username),
                 Username=username,
-                TemporaryPassword='YourSecurePassword123!',
+                Password=password,
                 UserAttributes=[
                     {
                         "Name": "email", 
-                        "Value": email},
-                    {
-                        "Name": "email_verified",
-                        "Value": "true",
-                    },
+                        "Value": email
+                },
             ],
-                MessageAction='SUPPRESS',
             )
 
-            client.admin_set_user_password(
-                UserPoolId=self.user_pool_id,
-                Username=username,
-                Password=password,
-                Permanent=True
-            )
+            
         except ClientError as error:
             code = error.response.get("Error", {}).get("Code")
             if code == "UsernameExistsException":
@@ -96,8 +88,8 @@ class CognitoAuthenticationEngine(AuthenticationEngine):
             raise AuthenticationError("service_unavailable", "Authentication service unavailable") from None
 
         return SignUpResult(
-            user_id=result["User"]["Username"],
-            user_confirmed=True,
+            user_id=result["UserSub"],
+            user_confirmed=result["UserConfirmed"],
         )
 
     def auto_confirm_email(self, username: str, account_confirmed: bool = False) -> None:

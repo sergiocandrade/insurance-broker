@@ -7,4 +7,5 @@ class BrokerNotFoundException(NotFoundException):
 
 
 class BrokerAlreadyActiveException(DomainException):
-    pass
+    def __init__(self):
+        super().__init__("Broker is already active")
